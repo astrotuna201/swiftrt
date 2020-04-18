@@ -18,6 +18,32 @@ import Foundation
 public typealias CStringPointer = UnsafePointer<CChar>
 
 //==============================================================================
+// clamping
+extension Comparable {
+    @inlinable public func clamped(to range: ClosedRange<Self>) -> Self {
+        if (self > range.upperBound) {
+            return range.upperBound
+        } else if self < range.lowerBound {
+            return range.lowerBound
+        }
+        return self
+    }
+}
+
+//==============================================================================
+// composing
+public extension UInt64 {
+    @inlinable init(msb: UInt32, lsb: UInt32) {
+        self = (UInt64(msb) << 32) | UInt64(lsb)
+    }
+
+    @inlinable var split: (msb: UInt32, lsb: UInt32) {
+        let mask: UInt64 = 0x00000000FFFFFFFF
+        return (UInt32((self >> 32) & mask), UInt32(self & mask))
+    }
+}
+
+//==============================================================================
 // Memory sizes
 extension Int {
     @inlinable
@@ -31,43 +57,24 @@ extension Int {
 }
 
 //==============================================================================
-// String(timeInterval:
-extension String {
-    @inlinable
-    public init(timeInterval: TimeInterval, precision: Int = 2) {
-        let remainder = timeInterval.truncatingRemainder(dividingBy: 1.0)
-        let interval = Int(timeInterval)
-        let seconds = interval % 60
-        let minutes = (interval / 60) % 60
-        let hours = (interval / 3600)
-        let remStr = String(format: "%.\(precision)f", remainder).dropFirst(2)
-        self = String(format: "%0.2d:%0.2d:%0.2d.\(remStr)",
-                      hours, minutes, seconds)
-    }
-}
-
-//==============================================================================
 // AtomicCounter
 public final class AtomicCounter {
     // properties
-    @usableFromInline var counter: Int
-    @usableFromInline let mutex = Mutex()
+    public var counter: Int
+    public let mutex = Mutex()
     
-    @inlinable
-    public var value: Int {
+    @inlinable public var value: Int {
         get { mutex.sync { counter } }
         set { mutex.sync { counter = newValue } }
     }
     
     // initializers
-    @inlinable
-    public init(value: Int = 0) {
+    @inlinable public init(value: Int = 0) {
         counter = value
     }
     
     // functions
-    @inlinable
-    public func increment() -> Int {
+    @inlinable public func increment() -> Int {
         return mutex.sync {
             counter += 1
             return counter
@@ -83,17 +90,14 @@ public final class AtomicCounter {
 /// concurrent queue
 public final class Mutex {
     // properties
-    @usableFromInline
-    let queue: DispatchQueue
+    public let queue: DispatchQueue
     
-    @inlinable
-    public init() {
+    @inlinable public init() {
         queue = DispatchQueue(label: "Mutex")
     }
     
     // functions
-    @inlinable
-    func sync<R>(execute work: () throws -> R) rethrows -> R {
+    @inlinable func sync<R>(execute work: () throws -> R) rethrows -> R {
         try queue.sync(execute: work)
     }
 }

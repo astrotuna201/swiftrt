@@ -19,8 +19,9 @@ import Foundation
 //==============================================================================
 /// StorageBuffer protocol
 public protocol StorageBuffer: class, Logging {
+    /// the type of element stored in the buffer
     associatedtype Element
-    
+
     /// the id of the buffer for diagnostics
     var id: Int { get }
     /// `true` if the buffer is read only
@@ -28,24 +29,25 @@ public protocol StorageBuffer: class, Logging {
     /// `true` if this buffer is a reference to an application managed buffer
     var isReference: Bool { get }
     /// the buffer name used in diagnostic messages
-    var name: String { get }
+    var name: String { get set }
     
     /// `init(count:name:
-    /// creates a lazily allocated element buffer
-    /// - Parameter count: size of the buffer in `Element` units
-    /// - Parameter name: name used in diagnostic messages
+    /// creates an uninitialized lazily allocated element buffer
+    /// - Parameters:
+    ///  - count: size of the buffer in `Element` units
+    ///  - name: name used in diagnostic messages
     init(count: Int, name: String)
+    
+    /// `init(element:name:
+    /// creates a storage buffer with a single element
+    /// - Parameters:
+    ///  - element: the initial element value
+    ///  - name: name used in diagnostic messages
+    init(single element: Element, name: String)
     
     /// `init(copying other:`
     /// copy constructor
     init(copying other: Self)
-    
-    /// `init(elements:name:`
-    /// creates a lazily allocated element buffer
-    /// - Parameter elements: a collection of initial buffer elements
-    /// - Parameter name: name used in diagnostic messages
-    init<C>(elements: C, name: String)
-        where C: Collection, C.Element == Element
     
     /// `init(buffer:`
     /// creates an element buffer whose data is managed by the application.
@@ -53,78 +55,80 @@ public protocol StorageBuffer: class, Logging {
     /// This can be used to access things like hardware buffers or
     /// memory mapped files, network buffers, database results, without
     /// requiring an additional copy operation.
-    /// - Parameter buffer: a buffer pointer to the data
-    /// - Parameter name: name used in diagnostic messages
+    /// - Parameters:
+    ///  - buffer: a buffer pointer to the data
+    ///  - name: name used in diagnostic messages
     init(referenceTo buffer: UnsafeBufferPointer<Element>, name: String)
     
     /// `init(buffer:`
     /// creates an element buffer whose data is managed by the application.
     /// No memory is allocated, so the buffer must point to valid data space.
-    /// - Parameter buffer: a mutable buffer pointer to application data
-    /// - Parameter name: name used in diagnostic messages
+    /// - Parameters:
+    ///  - buffer: a mutable buffer pointer to application data
+    ///  - name: name used in diagnostic messages
     init(referenceTo buffer: UnsafeMutableBufferPointer<Element>, name: String)
     
     /// `init(blockSize:bufferedBlocks:sequence:`
     /// initializes a streaming device buffer to be used with `stream`
-    /// - Parameter type: the element type of the buffer
-    /// - Parameter shape: the shape of the blocks read or written to
-    /// the sequence in a given transaction. This might be the number
-    /// of elements in a view.
-    /// - Parameter bufferedBlocks: the size of the device buffer
-    /// to reserve in block units
-    /// - Parameter stream: the I/O object for read/write operations
-    init<B, Stream>(block shape: Shape<B>, bufferedBlocks: Int, stream: Stream)
-        where B: ShapeBounds, Stream: BufferStream
+    /// - Parameters:
+    ///  - type: the element type of the buffer
+    ///  - shape: the shape of the blocks read or written to
+    ///    the sequence in a given transaction. This might be the number
+    ///    of elements in a view.
+    ///  - bufferedBlocks: the size of the device buffer
+    ///    to reserve in block units
+    ///  - stream: the I/O object for read/write operations
+    init<S, Stream>(block shape: S, bufferedBlocks: Int, stream: Stream)
+        where S: TensorShape, Stream: BufferStream
+        
+    /// `element(offset:`
+    /// - Parameter offset: the linear storage index of the element
+    /// - Returns: a single element at the specified offset
+    func element(at offset: Int) -> Element
     
-    /// `init(element:name:
-    /// initializes an element buffer for the specified `Element` value.
-    /// User expressions use a lot of constant scalar values
-    /// which are repeated. For example: `let m = matrix + 1`. These
-    /// expressions are frequently iterated thousands of times. This initializer
-    /// can access a cache of constant value buffers, which are likely to
-    /// already be present on a discreet accelerator device.
-    /// - Parameter element: the element value
-    init(for element: Element, name: String)
+    /// `setElement(value:offset:`
+    /// - Parameters:
+    ///  - value: the value to set
+    ///  - offset: the linear storage index of the element
+    func setElement(value: Element, at offset: Int)
     
-    /// `read(offset:count:
+    /// `read(offset:count:`
     /// gets a buffer pointer blocking the calling thread until synchronized
-    /// - Parameter offset: the offset in element sized units from
-    /// the beginning of the buffer to read
-    /// - Parameter count: the number of elements to be accessed
+    /// - Parameters:
+    ///  - offset: the buffer base offset within storage
+    ///  - count: the number of elements to be accessed
     /// - Returns: a buffer pointer to the elements. Elements will be valid
-    /// when the queue reaches this point
+    ///   when the queue reaches this point
     func read(at offset: Int, count: Int) -> UnsafeBufferPointer<Element>
     
     /// `read(offset:count:queue:`
-    /// - Parameter offset: the offset in element sized units from
-    /// the beginning of the buffer to read
-    /// - Parameter count: the number of elements to be accessed
-    /// - Parameter queue: queue for device placement and synchronization
+    /// - Parameters:
+    ///  - offset: the buffer base offset within storage
+    ///  - count: the number of elements to be accessed
+    ///  - queue: queue for device placement and synchronization
     /// - Returns: a buffer pointer to the elements. Elements will be valid
-    /// when the queue reaches this point
+    ///   when the queue reaches this point
     func read(at offset: Int, count: Int, using queue: DeviceQueue)
         -> UnsafeBufferPointer<Element>
     
     /// `readWrite(type:offset:count:willOverwrite:
-    /// - Parameter offset: the offset in element sized units from
-    /// the beginning of the buffer to read
-    /// - Parameter count: the number of elements to be accessed
-    /// - Parameter willOverwrite: `true` if the caller guarantees all
-    /// buffer elements will be overwritten
+    /// - Parameters:
+    ///  - offset: the buffer base offset within storage
+    ///  - count: the number of elements to be accessed
     /// - Returns: a mutable buffer pointer to the elements.
-    /// Elements will be valid when the queue reaches this point
-    func readWrite(at offset: Int, count: Int, willOverwrite: Bool)
+    ///   Elements will be valid when the queue reaches this point
+    func readWrite(at offset: Int, count: Int)
         -> UnsafeMutableBufferPointer<Element>
 
     /// `readWrite(type:offset:count:willOverwrite:queue:
-    /// - Parameter offset: the offset in element sized units from
-    /// the beginning of the buffer to read
-    /// - Parameter count: the number of elements to be accessed
-    /// - Parameter queue: queue for device placement and synchronization
-    /// - Parameter willOverwrite: `true` if the caller guarantees all
-    /// buffer elements will be overwritten
+    /// - Parameters:
+    ///  - offset: the buffer base offset within storage
+    ///  - count: the number of elements to be accessed
+    ///  - queue: queue for device placement and synchronization
+    ///  - willOverwrite: `true` if the caller guarantees all
+    ///    buffer elements will be overwritten
     /// - Returns: a mutable buffer pointer to the elements.
-    /// Elements will be valid when the queue reaches this point
+    ///   Elements will be valid when the queue reaches this point
     func readWrite(at offset: Int, count: Int,
                    willOverwrite: Bool, using queue: DeviceQueue)
         -> UnsafeMutableBufferPointer<Element>
@@ -138,97 +142,3 @@ public protocol BufferStream {
     var isMutable: Bool { get }
     
 }
-
-//==============================================================================
-/// ShapedBuffer
-public protocol ShapedBuffer: Collection {
-    associatedtype Element
-    associatedtype Bounds: ShapeBounds
-
-    var pointer: UnsafeBufferPointer<Element> { get }
-    var shape: Shape<Bounds> { get }
-}
-
-//==============================================================================
-/// BufferElements
-public struct BufferElements<Element, Bounds>: ShapedBuffer
-    where Bounds: ShapeBounds
-{
-    public typealias Index = Shape<Bounds>.Index
-    public let pointer: UnsafeBufferPointer<Element>
-    public let shape: Shape<Bounds>
-
-    @inlinable public var endIndex: Index { shape.endIndex }
-    @inlinable public var startIndex: Index { shape.startIndex }
-
-    //-----------------------------------
-    // initializers
-    @inlinable
-    public init(_ shape: Shape<Bounds>,
-                _ pointer: UnsafeBufferPointer<Element>)
-    {
-        assert(pointer.count > 0, "can't enumerate an empty shape")
-        self.shape = shape
-        self.pointer = pointer
-    }
-    
-    //-----------------------------------
-    // Collection
-    @inlinable
-    public func index(after i: Index) -> Index { shape.index(after: i) }
-
-    @inlinable
-    public subscript(index: Index) -> Element {
-        pointer[shape[index]]
-    }
-}
-
-//==============================================================================
-/// MutableShapedBuffer
-public protocol MutableShapedBuffer: MutableCollection {
-    associatedtype Element
-    associatedtype Bounds: ShapeBounds
-
-    var pointer: UnsafeMutableBufferPointer<Element> { get }
-    var shape: Shape<Bounds> { get }
-}
-
-//==============================================================================
-/// MutableBufferElements
-public struct MutableBufferElements<Element, Bounds>: MutableShapedBuffer
-    where Bounds: ShapeBounds
-{
-    public typealias Index = Shape<Bounds>.Index
-    public let pointer: UnsafeMutableBufferPointer<Element>
-    public let shape: Shape<Bounds>
-    
-    @inlinable public var endIndex: Index { shape.endIndex }
-    @inlinable public var startIndex: Index { shape.startIndex }
-    
-    //-----------------------------------
-    // initializers
-    @inlinable
-    public init(_ shape: Shape<Bounds>,
-                _ pointer: UnsafeMutableBufferPointer<Element>)
-    {
-        assert(pointer.count > 0, "can't enumerate an empty shape")
-        self.shape = shape
-        self.pointer = pointer
-    }
-    
-    //-----------------------------------
-    // Collection
-    @inlinable
-    public func index(after i: Index) -> Index { shape.index(after: i) }
-
-    @inlinable
-    public subscript(index: Index) -> Element {
-        get {
-            pointer[shape[index]]
-        }
-        set {
-            pointer[shape[index]] = newValue
-        }
-    }
-}
-

@@ -33,87 +33,80 @@ class test_Comparative: XCTestCase {
     //--------------------------------------------------------------------------
     // test_elementsAlmostEqual
     func test_elementWiseAndOr() {
-        let v0 = BoolVector([true, false, true, false, true])
-        let v1 = BoolVector([false, true, false, true, true])
-        XCTAssert((v0 .&& v1) == [false, false, false, false, true])
-        XCTAssert((v0 .|| v1) == [true, true, true, true, true])
+        let a = array([true, false, true, false, true])
+        let b = array([false, true, false, true, true])
+        XCTAssert((a .&& b) == [false, false, false, false, true])
+        XCTAssert((a .|| b) == [true, true, true, true, true])
     }
     
     //--------------------------------------------------------------------------
     // test_elementsAlmostEqual
     func test_elementsAlmostEqual() {
-        let m1 = Matrix(3, 2, with: [0, 1.05, 2.0, -3, 4.2, 5.001])
-        let m2 = Matrix(3, 2, with: [0, 1.00, 2.1,  3, 4.0, 4.999])
-        let expected = [true, true, true, false, false, true]
-        let result = elementsAlmostEqual(m1, m2, tolerance: 0.1)
-        XCTAssert(result.flatArray == expected)
+        let a = array([[0, 1.05], [2.0, -3], [4.2, 5.001]])
+        let b = array([[0, 1.00], [2.1,  3], [4.0, 4.999]])
+        let result = elementsAlmostEqual(a, b, tolerance: 0.1)
+        XCTAssert(result == [[true, true], [true, false], [false, true]])
     }
     
     //--------------------------------------------------------------------------
     // test_equality
     func test_equality() {
         // compare by value
-        let m1 = Matrix(3, 2, with: 0..<6)
-        let m2 = Matrix(3, 2, with: 0..<6)
-        XCTAssert(m1 == m2)
+        let a = array(0..<6, (3, 2))
+        let b = array(0..<6, (3, 2))
+        XCTAssert(a == b)
 
         // compare by value not equal
-        let other = Matrix(3, 2, with: 1..<7)
-        XCTAssert(m1 != other)
+        let other = array(1..<7, (3, 2))
+        XCTAssert(a != other)
         
         // compare via alias detection
-        let m3 = m2
-        XCTAssert(m3 == m2)
+        let c = b
+        XCTAssert(c == b)
         
-        let m4 = Matrix(3, 2, with: 1..<7)
-        let ne = (m4 .!= m3).any().element
+        let d = array(1..<7, (3, 2))
+        let ne = (d .!= c).any().element
         XCTAssert(ne)
-        XCTAssert(m4 != m3)
+        XCTAssert(d != c)
     }
 
     //--------------------------------------------------------------------------
     // test_maximum
     func test_max() {
-        let m1 = Matrix(3, 2, with: [0, 1, -2, -3, -4, 5])
-        let m2 = Matrix(3, 2, with: [0, -7, 2, 3, 4, 5])
-        XCTAssert(max(m1, m2) == [0, 1, 2, 3, 4, 5])
+        let a = array([[0, 1], [-2, -3], [-4, 5]])
+        let b = array([[0, -7], [2, 3], [4, 5]])
+        XCTAssert(max(a, b) == [[0, 1], [2, 3], [4, 5]])
         
-//        let ones = Matrix(repeating: 1, like: m1)
-//        let (gm1, gm2) = pullback(at: m1, m2, in: { max($0, $1) })(ones)
-//        XCTAssert(gm1 == [1, 1, 0, 0, 0, 1])
-//        XCTAssert(gm2 == [0, 0, 1, 1, 1, 0])
+        let (ga, gb) = pullback(at: a, b, in: { max($0, $1) })(ones(like: a))
+        XCTAssert(ga == [[1, 1], [0, 0], [0, 1]])
+        XCTAssert(gb == [[0, 0], [1, 1], [1, 0]])
     }
-    
+
     //--------------------------------------------------------------------------
     // test_maxScalar
     func test_maxScalar() {
-        let m1 = Matrix(3, 2, with: 0...5)
-        let scalar: Float = 2
-        let expected = [2, 2, 2, 3, 4, 5]
-        XCTAssert(max(m1, scalar) == expected)
-        XCTAssert(max(scalar, m1) == expected)
+        let a = array(0...5, (3, 2))
+        XCTAssert(max(a, 2) == [[2, 2], [2, 3], [4, 5]])
+        XCTAssert(max(2, a) == [[2, 2], [2, 3], [4, 5]])
     }
-    
+
     //--------------------------------------------------------------------------
     // test_min
     func test_min() {
-        let m1 = Matrix(3, 2, with: [0, 1, 2, -3, 4, -5])
-        let m2 = Matrix(3, 2, with: [0, -1, -2, 3, -4, 5])
-        XCTAssert(min(m1, m2) == [0, -1, -2, -3, -4, -5])
+        let a = array([[0,  1], [2, -3], [4, -5]])
+        let b = array([[0, -1], [-2, 3], [-4, 5]])
+        XCTAssert(min(a, b) == [[0, -1], [-2, -3], [-4, -5]])
 
-//        let ones = Matrix(repeating: 1, like: m1)
-//        let (gm1, gm2) = pullback(at: m1, m2, in: { min($0, $1) })(ones)
-//        XCTAssert(gm1 == [1, 0, 0, 1, 0, 1])
-//        XCTAssert(gm2 == [0, 1, 1, 0, 1, 0])
+        let (ga, gb) = pullback(at: a, b, in: { min($0, $1) })(ones(like: a))
+        XCTAssert(ga == [[1, 0], [0, 1], [0, 1]])
+        XCTAssert(gb == [[0, 1], [1, 0], [1, 0]])
     }
-    
+
     //--------------------------------------------------------------------------
     // test_minScalar
     func test_minScalar() {
-        let m1 = Matrix(3, 2, with: 0...5)
-        let scalar: Float = 3
-        let expected = [0, 1, 2, 3, 3, 3]
-        XCTAssert(min(m1, scalar) == expected)
-        XCTAssert(min(scalar, m1) == expected)
+        let a = array(0...5, (3, 2))
+        XCTAssert(min(a, 3) == [[0, 1], [2, 3], [3, 3]])
+        XCTAssert(min(3, a) == [[0, 1], [2, 3], [3, 3]])
     }
 }

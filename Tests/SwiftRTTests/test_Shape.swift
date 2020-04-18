@@ -21,77 +21,181 @@ class test_Shape: XCTestCase {
     //==========================================================================
     // support terminal test run
     static var allTests = [
+        ("test_reshape", test_reshape),
+        ("test_reshapeOrder", test_reshapeOrder),
+        ("test_expanding", test_expanding),
         ("test_SequentialViews", test_SequentialViews),
-        ("test_ShapeCollection", test_ShapeCollection),
         ("test_transposed", test_transposed),
+        ("test_squeezing", test_squeezing),
+        ("test_stacking", test_stacking),
+        ("test_stackingExpression", test_stackingExpression),
     ]
 
     //--------------------------------------------------------------------------
-    // test_perfIndexShape1
-    func test_perfIndexShape1() {
-        #if !DEBUG
-        let shape = Shape(Bounds1(1024 * 1024))
-        var count = 0
-        self.measure {
-            for _ in 0..<10 {
-                let array = shape.array
-                count += array.last!
-            }
-        }
-        XCTAssert(count > 0)
-        #endif
-    }
+    // test_reshape
+    func test_reshape() {
+        let a3 = array(0..<12, (2, 3, 2))
 
-    func test_perfIndexShape2() {
-        #if !DEBUG
-        let shape = Shape(Bounds2(1024, 1024))
-        var count = 0
-        self.measure {
-            for _ in 0..<10 {
-                let array = shape.array
-                count += array.last!
-            }
-        }
-        XCTAssert(count > 0)
-        #endif
-    }
+        // R3 -> R2
+        let a2 = reshape(a3, (2, -1))
+        XCTAssert(a2.shape == [2, 6])
+        XCTAssert(a2 == [[0, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11]])
+        
+        // R3 -> R1
+        let a1 = reshape(a3, -1)
+        XCTAssert(a1 == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+        
+        // R1 -> R2
+        let b2 = reshape(a1, (2, -1))
+        XCTAssert(b2 == [[0, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11]])
 
-    func test_perfIndexShape3() {
-        #if !DEBUG
-        let shape = Shape(Bounds3(64, 128, 128))
-        var count = 0
-        self.measure {
-            for _ in 0..<10 {
-                let array = shape.array
-                count += array.last!
-            }
-        }
-        XCTAssert(count > 0)
-        #endif
+        // R1 -> R3
+        let b3 = reshape(a1, (2, 2, 3))
+        XCTAssert(b3 == [[[0, 1, 2], [3, 4, 5]], [[6, 7, 8], [9, 10, 11]]])
     }
     
-    func test_perfIndexShape4() {
+    //--------------------------------------------------------------------------
+    // test_reshapeOrder
+    func test_reshapeOrder() {
+//        var rm = array(0..<6, (2, 3))
+//        print(rm)
+//        var cm = reshape(rm, (2, 3), order: .F)
+//        print(cm)
+//        cm = array(0..<6, (2, 3), order: .F)
+//        print(cm.flatArray)
+//        rm = reshape(cm, (2, 3), order: .C)
+//        print(rm.flatArray)
+    }
+    
+    //--------------------------------------------------------------------------
+    // test_expanding
+    func test_expanding() {
+        let a = array(0..<4)
+        let b = expand(dims: a, axis: 0)
+        XCTAssert(b.shape == [1, 4])
+        XCTAssert(b.strides == [4, 1])
+        XCTAssert(b == [[0, 1, 2, 3]])
+        
+        let c = expand(dims: b, axes: (3, 0))
+        XCTAssert(c.shape == [1, 1, 4, 1])
+        XCTAssert(c.strides == [4, 4, 1, 1])
+        XCTAssert(c == [[[[0], [1], [2], [3]]]])
+    }
+    
+    //--------------------------------------------------------------------------
+    // test_squeezing
+    func test_squeezing() {
+//        let volume = Volume(2, 3, 4, with: 0..<24)
+//
+//        let sumVolumeCols = volume.sum(alongAxes: 2)
+//        XCTAssert(sumVolumeCols.bounds == [2, 3, 1])
+//        let m0 = Matrix(squeezing: sumVolumeCols)
+//        XCTAssert(m0.bounds == [2, 3])
+//
+//        let sumVolumeRows = volume.sum(alongAxes: 1)
+//        XCTAssert(sumVolumeRows.bounds == [2, 1, 4])
+//        let m2 = Matrix(squeezing: sumVolumeRows, alongAxes: 1)
+//        XCTAssert(m2.bounds == [2, 4])
+//
+//        // test negative axes
+//        let m3 = Matrix(squeezing: sumVolumeRows, alongAxes: -2)
+//        XCTAssert(m3.bounds == [2, 4])
+//
+//        do {
+//            let ones = Matrix(repeating: 1, to: 2, 12)
+//            let g = pullback(at: sumVolumeRows,
+//                             in: { Matrix(squeezing: $0, alongAxes: 1) })(ones)
+//            XCTAssert(g == [Float](repeating: 1, count: 24))
+//        }
+    }
+
+    //--------------------------------------------------------------------------
+    // test_stacking
+    func test_stacking() {
+        let a = array(0..<6, (2, 3))
+        let b = array(6..<12, (2, 3))
+
+        let v0 = stack(a, b)
+        XCTAssert(v0 == [[[0, 1, 2], [3, 4, 5]], [[6, 7, 8], [9, 10, 11]]])
+
+        let v1 = stack(a, b, axis: 1)
+        XCTAssert(v1 == [
+            [[0, 1, 2], [6,  7,  8]],
+            [[3, 4, 5], [9, 10, 11]]])
+
+        let v2 = stack(a, b, axis: 2)
+        XCTAssert(v2 ==
+            [[[0, 6],
+              [1, 7],
+              [2, 8]],
+             
+             [[3, 9],
+              [4, 10],
+              [5, 11]]])
+    }
+    
+    //--------------------------------------------------------------------------
+    // test_stackingExpression
+    func test_stackingExpression() {
+//        Context.log.level = .diagnostic
+        let i = 3
+        let j = 3
+        let maxK: Float = 16
+        let k1 = array(0..<30, (5, 6))
+
+        let mask = squeeze(stack([
+            k1[0...j  , 1...i  ],
+            k1[0...j  , 2...i+1],
+            k1[1...j+1, 1...i  ],
+            k1[1...j+1, 2...i+1]
+        ]).max(alongAxes: 0), axis: 0) .<= maxK
+
+        XCTAssert(mask.array == [[true, true, true],
+                                 [true, true, true],
+                                 [false, false, false],
+                                 [false, false, false]])
+        
+//        let s0 = k1[0...j, 1...i]
+//        let s1 = k1[0...j, 2...i+1]
+//        let s2 = k1[1...j+1, 1...i]
+//        let s3 = k1[1...j+1, 2...i+1]
+//        let stacked = stack(s0, s1, s2, s3)
+//        let maxStack = stacked.max(alongAxes: 0)
+//        let sq = squeeze(maxStack, axis: 0)
+//        let m = sq .<= maxK
+//
+//        XCTAssert(m == [[true, true, true],
+//                        [true, true, true],
+//                        [false, false, false],
+//                        [false, false, false]])
+    }
+    
+    //--------------------------------------------------------------------------
+    // test_perfTensor1
+    func test_perfTensor1() {
         #if !DEBUG
-        let shape = Shape(Bounds4(2, 32, 128, 128))
-        var count = 0
+        let a = ones(1024 * 1024)
+        var count: DType = 0
         self.measure {
-            for _ in 0..<10 {
-                let array = shape.array
-                count += array.last!
+            for value in a {
+                count += value
             }
         }
         XCTAssert(count > 0)
         #endif
     }
-    
-    func test_perfIndexShape5() {
+        
+    //--------------------------------------------------------------------------
+    // test_perfTensor2
+    func test_perfTensor2() {
         #if !DEBUG
-        let shape = Shape(Bounds5(2, 2, 16, 128, 128))
-        var count = 0
+        let a = ones((1024, 1024))
+        var count: DType = 0
+        
+        // 0.001s
         self.measure {
-            for _ in 0..<10 {
-                let array = shape.array
-                count += array.last!
+            for value in a {
+                count += value
             }
         }
         XCTAssert(count > 0)
@@ -99,164 +203,136 @@ class test_Shape: XCTestCase {
     }
 
     //--------------------------------------------------------------------------
-    // test_SequentialViews
-    let simdPerfIterations = 10000000
-    
-    func test_perfSIMD2() {
+    // test_perfRepeatedTensor3
+    func test_perfRepeatedTensor3() {
         #if !DEBUG
-        let bounds = SIMD2(2, 3)
-        let strides = SIMD2(3, 1)
-        let pos = SIMD2(1, 2)
-        var total = 0
-        measure {
-            for _ in 0..<simdPerfIterations {
-                let span = ((bounds &- 1) &* strides).wrappedSum() + 1
-                let count = bounds.indices.reduce(1) { $0 * bounds[$1] }
-                let linear = (pos &* strides).wrappedSum()
-                total += span + count + linear
+        let a = repeating(1, (64, 128, 128))
+        var count: DType = 0
+        self.measure {
+            for value in a {
+                count += value
             }
         }
-        XCTAssert(total > 0)
-        #endif
-    }
-
-    func test_perfSIMD3() {
-        #if !DEBUG
-        let bounds = SIMD3(2, 3, 4)
-        let strides = SIMD3(12, 3, 1)
-        let pos = SIMD3(1, 2, 3)
-        var total = 0
-        measure {
-            for _ in 0..<simdPerfIterations {
-                let span = ((bounds &- 1) &* strides).wrappedSum() + 1
-                let count = bounds.indices.reduce(1) { $0 * bounds[$1] }
-                let linear = (pos &* strides).wrappedSum()
-                total += span + count + linear
-            }
-        }
-        print(total)
-        XCTAssert(total > 0)
+        XCTAssert(count > 0)
         #endif
     }
     
-    func test_perfSIMD4() {
+    //--------------------------------------------------------------------------
+    // test_perfTensor3
+    func test_perfTensor3() {
         #if !DEBUG
-        let bounds = SIMD4(1, 2, 3, 4)
-        let strides = SIMD4(24, 12, 3, 1)
-        let pos = SIMD4(0, 1, 2, 3)
-        var total = 0
-        measure {
-            for _ in 0..<simdPerfIterations {
-                let span = ((bounds &- 1) &* strides).wrappedSum() + 1
-                let count = bounds.indices.reduce(1) { $0 * bounds[$1] }
-                let linear = (pos &* strides).wrappedSum()
-                total += span + count + linear
+        let a = ones((64, 128, 128))
+        var count: DType = 0
+        self.measure {
+            for value in a {
+                count += value
             }
         }
-        print(total)
-        XCTAssert(total > 0)
+        XCTAssert(count > 0)
         #endif
     }
-
-    func test_perfSIMD5() {
+    
+    //--------------------------------------------------------------------------
+    // test_perfTensor4
+    func test_perfTensor4() {
         #if !DEBUG
-        let bounds = SIMD5(1, 2, 3, 4, 5)
-        let strides = SIMD5(120, 60, 20, 5, 1)
-        let pos = SIMD5(0, 1, 2, 3, 4)
-        var total = 0
-        measure {
-            for _ in 0..<simdPerfIterations {
-                let span = ((bounds &- 1) &* strides).wrappedSum() + 1
-                let count = bounds.indices.reduce(1) { $0 * bounds[$1] }
-                let linear = (pos &* strides).wrappedSum()
-                total += span + count + linear
+        let a = ones((2, 32, 128, 128))
+        var count: DType = 0
+        self.measure {
+            for value in a {
+                count += value
             }
         }
-        print(total)
-        XCTAssert(total > 0)
+        XCTAssert(count > 0)
         #endif
     }
+    
+    //--------------------------------------------------------------------------
+    // test_perfTensor5
+    func test_perfTensor5() {
+        #if !DEBUG
+        let a = ones((2, 2, 16, 128, 128))
+        var count: DType = 0
+        self.measure {
+            for value in a {
+                count += value
+            }
+        }
+        XCTAssert(count > 0)
+        #endif
+    }
+    
+    //--------------------------------------------------------------------------
+    // test_initRepeating
+    func test_initRepeating() {
+        #if !DEBUG
+        var count: DType = 0
+        self.measure {
+            for _ in 0..<100000 {
+                let a = Tensor1<Float>(repeating: 1, to: Shape1(1))
+                count += a.element
+            }
+        }
+        XCTAssert(count > 0)
+        #endif
+    }
+    
+    //--------------------------------------------------------------------------
+    // test_initSingle
+    func test_initSingle() {
+        #if !DEBUG
+        var count: DType = 0
+        self.measure {
+            for _ in 0..<100000 {
+                let a = Tensor1<Float>(1)
+                count += a.element
+            }
+        }
+        XCTAssert(count > 0)
+        #endif
+    }
+    
     //--------------------------------------------------------------------------
     // test_SequentialViews
     func test_SequentialViews() {
         // vector views are always sequential
-        let v = Vector(0..<6)
+        let v = array(0..<6)
         let subv = v[1...2]
-        XCTAssert(subv.shape.isSequential)
+        XCTAssert(subv.isSequential)
         
         // a batch of rows are sequential
-        let m = Matrix(4, 5)
+        let m = empty((4, 5))
         let mrows = m[1...2, ...]
-        XCTAssert(mrows.shape.isSequential)
-
+        XCTAssert(mrows.isSequential)
+        
         // a batch of columns are not sequential
-        let m1 = Matrix(4, 5)
+        let m1 = empty((4, 5))
         let mcols = m1[..., 1...2]
-        XCTAssert(!mcols.shape.isSequential)
+        XCTAssert(!mcols.isSequential)
     }
     
-    //--------------------------------------------------------------------------
-    // test_ShapeCollection
-    func test_ShapeCollection() {
-        // repeating
-        XCTAssert(Shape(Bounds1(3), strides: Bounds1(0)) == [0, 0, 0])
-        XCTAssert(Shape(Bounds2(2, 3), strides: Bounds2(0, 1)) == [0, 1, 2, 0, 1, 2])
-        XCTAssert(Shape(Bounds2(2, 3), strides: Bounds2(1, 0)) == [0, 0, 0, 1, 1, 1])
-
-        // strided
-        XCTAssert(Shape(Bounds1(5), strides: Bounds1(3)) == [0, 3, 6, 9, 12])
-        XCTAssert(Shape(Bounds1(5), strides: Bounds1(3)) == [0, 3, 6, 9, 12])
-        XCTAssert(Shape(Bounds2(2, 3), strides: Bounds2(6, 2)) == [0, 2, 4, 6, 8, 10])
-
-        // dense
-        XCTAssert(Shape(Bounds2(2, 3)) == [0, 1, 2, 3, 4, 5])
-        XCTAssert(Shape(Bounds3(2, 3, 4)) == [Int](0..<24))
-    }
-
     //--------------------------------------------------------------------------
     // test_transposed
     func test_transposed() {
-        let volume = Volume(2,3,4).filledWithIndex()
-        let transVolume = volume.transposed(with: Bounds3(2,1,0))
-        XCTAssert(transVolume.array == [[[ 0.0, 12.0],
-                                         [ 4.0, 16.0],
-                                         [ 8.0, 20.0]],
-                                        
-                                        [[ 1.0, 13.0],
-                                         [ 5.0, 17.0],
-                                         [ 9.0, 21.0]],
-                                        
-                                        [[ 2.0, 14.0],
-                                         [ 6.0, 18.0],
-                                         [10.0, 22.0]],
-                                        
-                                        [[ 3.0, 15.0],
-                                         [ 7.0, 19.0],
-                                         [11.0, 23.0]]])
-    }
-    
-    //--------------------------------------------------------------------------
-    // test_perfInitShape2
-    func test_perfInitShape2() {
-        #if !DEBUG
-        var shape = Shape(Bounds2(1, 1))
-        let index = Shape.Index(Bounds2.one, 5)
-        var i = 0
-        self.measure {
-            for _ in 0..<1000000 {
-                let a = Shape(bounds: Bounds2(3, 4))
-                let b = a.columnMajor
-                let ds = a == b ? b.dense : a.dense
-                let positive = Shape.makePositive(bounds: Bounds2(1, -1))
-                let c = Shape(bounds: positive)
-                let r = Shape(bounds: Bounds2.one).repeated(to: a.bounds)
-                let j = a.joined(with: [ds, c, r], alongAxis: 1)
-                let t = j.transposed()
-                shape = t
-                i = shape[index]
-            }
-        }
-        XCTAssert(shape.bounds == Bounds2(13, 3) && i > 0)
-        #endif
+        let m = array(0..<9, (3, 3))
+        XCTAssert(m.t == [[0,3,6], [1,4,7], [2,5,8]])
+        
+        let a = array(0..<24, (2,3,4))
+        let transA = a.transposed(permutatedBy: (2,1,0))
+        XCTAssert(transA == [[[ 0.0, 12.0],
+                              [ 4.0, 16.0],
+                              [ 8.0, 20.0]],
+                             
+                             [[ 1.0, 13.0],
+                              [ 5.0, 17.0],
+                              [ 9.0, 21.0]],
+                             
+                             [[ 2.0, 14.0],
+                              [ 6.0, 18.0],
+                              [10.0, 22.0]],
+                             
+                             [[ 3.0, 15.0],
+                              [ 7.0, 19.0],
+                              [11.0, 23.0]]])
     }
 }

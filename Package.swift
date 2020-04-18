@@ -24,30 +24,38 @@ let buildCuda = platform == "cuda"
 //---------------------------------------
 // the base products, dependencies, and targets
 var products: [PackageDescription.Product] = [
-    .library(name: "SwiftRT", targets: ["SwiftRT"])
+    .library(name: "SwiftRT", targets: ["SwiftRT"]),
 ]
 var dependencies: [Target.Dependency] = ["Numerics"]
-var exclusions: [String] = []
+var testDependencies: [Target.Dependency] = ["SwiftRT"]
+var exclusions: [String] = ["*.gyb"]
 var targets: [PackageDescription.Target] = []
 
 //==============================================================================
 // Cuda service module
 if buildCuda {
-//    let currentDir = FileManager().currentDirectoryPath
-//    let kernelsDir = "\(currentDir)/Sources/SwiftRT/platform/cuda/kernels"
-//    let kernelsLibName = "SwiftRTCudaKernels"
-
     //---------------------------------------
     // add Cuda system module
     products.append(.library(name: "CCuda", targets: ["CCuda"]))
     dependencies.append("CCuda")
-    targets.append(
-        .systemLibrary(name: "CCuda", path: "Modules/Cuda", pkgConfig: "cuda"))
+    testDependencies.append("CCuda")
+
+    #if os(Linux)
+    targets.append(.systemLibrary(name: "CCuda", path: "Modules/Cuda",
+            pkgConfig: "cuda"))
+    #else
+    targets.append(.systemLibrary(name: "CCuda", path: "Modules/Cuda",
+            pkgConfig: "cuda_mac"))
+    #endif
     
     //---------------------------------------
     // add SwiftRT Cuda kernels library built first via cmake
-    
-    exclusions.append("platform/cuda/kernels")
+//    products.append(.library(name: "CudaKernels", targets: ["CudaKernels"]))
+//    dependencies.append("CudaKernels")
+//    testDependencies.append("CudaKernels")
+//
+//    targets.append(.systemLibrary(name: "CudaKernels", path: "Modules/CudaKernels"))
+
 } else {
     exclusions.append("platform/cuda")
 }
@@ -58,14 +66,16 @@ targets.append(
     .target(name: "SwiftRT", dependencies: dependencies, exclude: exclusions))
 
 targets.append(
-    .testTarget(name: "SwiftRTTests", dependencies: ["SwiftRT"]))
+    .testTarget(name: "SwiftRTTests", dependencies: testDependencies))
 
 let package = Package(
     name: "SwiftRT",
+    platforms: [
+        .macOS(.v10_15),
+    ],
     products: products,
     dependencies: [
-        .package(url: "https://github.com/apple/swift-numerics",
-                 .branch("master"))
+        .package(url: "https://github.com/apple/swift-numerics", .branch("master"))
     ],
     targets: targets
 )

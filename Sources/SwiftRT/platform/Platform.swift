@@ -15,84 +15,174 @@
 //
 import Foundation
 
-#if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
-import Darwin
-#else
-import Glibc
-#endif
-
 //==============================================================================
 /// Platform
-/// Manages the scope for the current devices, log, and error handlers
-public struct Platform {
-    /// the time that the platform was first accessed
-    @usableFromInline static var startTime = Date()
-    /// the log output object
-    @usableFromInline static var logWriter: Log = Log()
-    /// the current compute platform for the thread
-    //    @usableFromInline var platform: PlatformService
-    /// a platform instance unique id for queue events
-    @usableFromInline static var queueEventCounter: Int = 0
-    /// counter for unique buffer ids
-    @usableFromInline static var bufferIdCounter: Int = 0
+/// a platform represents a collection of installed devices on a
+/// compute node, such as (cpu, cuda, tpu, ...)
+public protocol Platform: class, Logger {
+    // types
+    associatedtype Device: PlatformDevice
 
-    // maybe thread local
-    public static var service = PlatformServiceType()
-    
-    //--------------------------------------------------------------------------
-    /// the Platform log writing object
-    @inlinable public static var log: Log {
-        get { logWriter }
-        set { logWriter = newValue }
+    /// a collection of available compute devices
+    var devices: [Device] { get }
+    /// name used for logging
+    var name: String { get }
+    /// the current device and queue to direct work
+    var queueStack: [QueueId] { get set }
+}
+
+public extension Platform {
+    /// the currently active device that platform functions will use
+    /// - Returns: the current device
+    @inlinable @_transparent
+    var currentDevice: Device {
+        devices[currentQueueId.device]
     }
-    /// a counter used to uniquely identify queue events for diagnostics
-    @inlinable static var nextQueueEventId: Int {
-        queueEventCounter += 1
-        return queueEventCounter
+
+    /// the currently active queue that platform functions will use
+    /// - Returns: the current device queue
+    @inlinable @_transparent
+    var currentQueue: DeviceQueue {
+        let queueId = currentQueueId
+        return devices[queueId.device].queues[queueId.queue]
     }
-    
-    /// nextBufferId
-    @inlinable public static var nextBufferId: Int {
-        bufferIdCounter += 1
-        return bufferIdCounter
-    }
-//
-//    //--------------------------------------------------------------------------
-//    /// returns the thread local instance of the queues stack
-//    @usableFromInline
-//    static var threadLocal: Platform {
-//        // try to get an existing state
-//        if let state = pthread_getspecific(key) {
-//            return Unmanaged.fromOpaque(state).takeUnretainedValue()
-//        } else {
-//            // create and return new state
-//            let state = Platform()
-//            pthread_setspecific(key, Unmanaged.passRetained(state).toOpaque())
-//            return state
-//        }
-//    }
-//
-//    //--------------------------------------------------------------------------
-//    /// thread data key
-//    @usableFromInline
-//    static let key: pthread_key_t = {
-//        var key = pthread_key_t()
-//        pthread_key_create(&key) {
-//            #if os(macOS) || os(iOS) || os(watchOS) || os(tvOS)
-//            let _: AnyObject = Unmanaged.fromOpaque($0).takeRetainedValue()
-//            #else
-//            let _: AnyObject = Unmanaged.fromOpaque($0!).takeRetainedValue()
-//            #endif
-//        }
-//        return key
-//    }()
+
+    /// the currently active queue that platform functions will use
+    /// - Returns: the current device queue
+    @inlinable @_transparent
+    var currentQueueId: QueueId { queueStack.last! }
 }
 
 //==============================================================================
-/// ServiceDevice
+// queue API
+@inlinable public func useCpu() {
+    Context.platform.useCpu()
+}
+
+@inlinable public func use(device: Int, queue: Int = 0) {
+    Context.platform.use(device: device, queue: queue)
+}
+
+@inlinable public func using<R>(device: Int, queue: Int = 0,
+                                _ body: () -> R) -> R {
+    Context.platform.using(device: device, queue: queue, body)
+}
+
+@inlinable public func using<R>(queue: Int, _ body: () -> R) -> R {
+    Context.platform.using(queue: queue, body)
+}
+
+// Platform extensions
+public extension Platform {
+    /// changes the current device/queue to use cpu:0
+    @inlinable
+    func useCpu() {
+        queueStack[queueStack.count - 1] = QueueId(0, 0)
+    }
+    /// selects the specified device queue for output
+    /// - Parameter device: the device to use. Device 0 is the cpu
+    /// - Parameter queue: the queue on the device to use
+    @inlinable
+    func use(device: Int, queue: Int = 0) {
+        queueStack[queueStack.count - 1] = ensureValidId(device, queue)
+    }
+    /// selects the specified device queue for output within the scope of
+    /// the body
+    /// - Parameter device: the device to use. Device 0 is the cpu
+    /// - Parameter queue: the queue on the device to use
+    /// - Parameter body: a closure where the device queue will be used
+    @inlinable
+    func using<R>(device: Int, queue: Int = 0, _ body: () -> R) -> R {
+        // push the selection onto the queue stack
+        queueStack.append(ensureValidId(device, queue))
+        defer { _ = queueStack.popLast() }
+        return body()
+    }
+    /// selects the specified queue on the current device for output
+    /// within the scope of the body
+    /// - Parameter queue: the queue on the device to use
+    /// - Parameter body: a closure where the device queue will be used
+    @inlinable
+    func using<R>(queue: Int, _ body: () -> R) -> R {
+        // push the selection onto the queue stack
+        let current = queueStack.last!
+        queueStack.append(ensureValidId(current.device, queue))
+        defer { _ = queueStack.popLast() }
+        return body()
+    }
+    // peforms a mod on the indexes to guarantee they are mapped into bounds
+    @inlinable
+    func ensureValidId(_ deviceId: Int, _ queueId: Int) -> QueueId {
+        let device = deviceId % devices.count
+        let queue = queueId % devices[device].queues.count
+        return QueueId(device, queue)
+    }
+}
+
+//==============================================================================
+/// the type used for memory indexing on discreet devices
+public typealias DeviceIndex = Int32
+
+//==============================================================================
+/// NanPropagation
+public enum NanPropagation: Int, Codable {
+    case propagate, noPropagate
+}
+
+//==============================================================================
+/// StorageOrder
+/// Specifies how to store multi-dimensional data in row-major (C-style)
+/// or column-major (Fortran-style) order in memory.
+/// These names are following the numpy naming convention
+public enum StorageOrder: Int, Codable {
+    /// dynamic decision based on api
+    case A
+    /// C style row major memory layout
+    case C
+    /// Fortran style column major memory layout
+    case F
+    /// more expressive aliases
+    public static let rowMajor = C, colMajor = F
+}
+
+//==============================================================================
+/// ReductionOp
+public enum ReductionOp: Int, Codable {
+    case add
+    case mean
+    case mul
+    case min
+    case max
+    case amax
+    case asum
+    case sqrtSumSquares
+    case mulNonZeros
+    case compare
+}
+
+public typealias ReduceOpFinal<R: MutableCollection> = (R.Element) -> R.Element
+
+//==============================================================================
+/// ServiceError
+/// platform errors
+public enum ServiceError : Error {
+    case functionFailure(location: String, message: String)
+    case rangeError(String)
+}
+
+//==============================================================================
+public enum EvaluationMode {
+    /// operation is used to perform inference
+    case inferring
+    /// operation is used to perform training
+    case training
+}
+
+//==============================================================================
+/// PlatformDevice
 /// a compute device represents a physical service device installed
 /// on the platform
-public protocol ServiceDevice: Logger {
+public protocol PlatformDevice: class, Logger {
     /// the id of the device for example dev:0, dev:1, ...
     var id: Int { get }
     /// name used logging
@@ -101,15 +191,6 @@ public protocol ServiceDevice: Logger {
     var queues: [DeviceQueue] { get }
     /// specifies the type of device memory for data transfer
     var memoryType: MemoryType { get }
-
-    //-------------------------------------
-    /// `allocate(bytes:heapIndex:`
-    /// creates an array on this device
-    /// - Parameter byteCount: the number of bytes to allocate on the device
-    /// - Parameter heapIndex: the index of the heap to use
-    /// - Returns: a device memory object. It is the callers responsibility
-    /// to call deallocate when references drop to zero.
-    func allocate(byteCount: Int, heapIndex: Int) -> DeviceMemory
 }
 
 //==============================================================================
@@ -179,11 +260,8 @@ public struct QueueEventOptions: OptionSet {
     public static let timing       = QueueEventOptions(rawValue: 1 << 0)
     public static let interprocess = QueueEventOptions(rawValue: 1 << 1)
     
-    @inlinable
-    public init() { self.rawValue = 0 }
-    
-    @inlinable
-    public init(rawValue: Int) { self.rawValue = rawValue }
+    @inlinable public init() { self.rawValue = 0 }
+    @inlinable public init(rawValue: Int) { self.rawValue = rawValue }
 }
 
 public enum QueueEventError: Error {
@@ -204,8 +282,7 @@ public struct QueueId {
     public let device: Int
     public let queue: Int
     
-    @inlinable
-    public init(_ device: Int, _ queue: Int) {
+    @inlinable public init(_ device: Int, _ queue: Int) {
         self.device = device
         self.queue = queue
     }
@@ -213,7 +290,116 @@ public struct QueueId {
 
 //==============================================================================
 // assert messages
-@usableFromInline
-let _messageQueueThreadViolation =
+public let _messageQueueThreadViolation =
 "a queue can only be accessed by the thread that created it"
+
+//==============================================================================
+/// DeviceError
+public enum DeviceError : Error {
+    case initializeFailed
+    case queueError(idPath: [Int], message: String)
+    case timeout(idPath: [Int], message: String)
+}
+
+//==============================================================================
+/// TensorType protocol
+/// an n-dimensional collection of elements
+/// Currently there is only one tensor type, so these protocols are not
+/// needed. They are kept in place for future experimentation.
+///
+public protocol TensorType: Collection, CustomStringConvertible, Logging
+    where Index == ElementIndex<Shape>
+{
+    /// the ranked short vector type that defines the collection's dimensions
+    associatedtype Shape: TensorShape
+    /// the type of element in the collection
+    associatedtype Element
+
+    //----------------------------------
+    /// the number of elements described by `shape`
+    var elementCount: Int { get }
+    /// `true` if the tensor represents a single constant Element
+    var isSingleElement: Bool { get }
+    /// the dimensions of the collection
+    var shape: Shape { get }
+    /// the order in memory to store materialized Elements. Generator
+    /// tensor types maintain this property as a template for dense
+    /// result tensors.
+    var storageOrder: StorageOrder { get }
+
+    //----------------------------------
+    /// makeIndex(position:
+    /// makes an index from a logical position within `shape`
+    /// - Parameters:
+    ///  - position: the n-dimensional coordinate position within `shape`
+    /// - Returns: the index
+    func makeIndex(at position: Shape) -> Index
+
+    /// subscript
+    /// - Parameters:
+    ///  - lower: the lower bound of the slice
+    ///  - upper: the upper bound of the slice
+    /// - Returns: the collection slice
+    subscript(lower: Shape, upper: Shape) -> Self { get }
+
+    //----------------------------------
+    /// `read`
+    /// Synchronizes a collection of materialized elements for reading.
+    /// This function blocks until the elements are available.
+    /// `Elements` are accessed by the application using `Collection`
+    /// enumeration via `indices` or subscripting.
+    func read()
+    
+    /// `read(queue:
+    /// Synchronizes a collection of materialized elements for reading
+    /// using the specified `queue`. This function is non blocking, and
+    /// the elements will be available when the request reaches the
+    /// head of the queue.
+    ///
+    /// - Parameter queue: the device queue to use for synchronization
+    func read(using queue: DeviceQueue)
+}
+
+//==============================================================================
+/// MutableTensorType
+/// an n-dimensional mutable collection of stored elements
+public protocol MutableTensorType: TensorType, MutableCollection
+{
+    /// `true` if the collection can be shared by multiple writers
+    /// without performing copy-on-write
+    var isShared: Bool { get }
+    
+    //----------------------------------
+    /// `shared`
+    /// returns a copy of `self` that does not perform copy-on-write to enable
+    /// multi-threaded writes. If the associated storage is not uniquely
+    /// referenced, then a copy will be made before returning the sharable
+    /// copy. Subscripted views inherit the `isShared` property
+    /// - Returns: a sharable copy of `self`
+    mutating func shared() -> Self
+
+    /// subscript
+    /// - Parameters:
+    ///  - lower: the lower bound of the slice
+    ///  - upper: the upper bound of the slice
+    /// - Returns: the collection slice
+    subscript(lower: Shape, upper: Shape) -> Self { get set }
+    
+    //----------------------------------
+    /// `readWrite`
+    /// Synchronizes a collection of materialized elements for read write.
+    /// This function blocks until the elements are available.
+    /// `Elements` are accessed by the application using `MutableCollection`
+    /// enumeration via `indices` or subscripting.
+    mutating func readWrite()
+
+    /// `readWrite(queue:`
+    /// Synchronizes a mutable collection of materialized elements
+    /// using the specified `queue`. This function is non blocking, and
+    /// the elements will be available when the request reaches the
+    /// head of the queue.
+    ///
+    /// - Parameter queue: the device queue to use for synchronization
+    mutating func readWrite(using queue: DeviceQueue)
+}
 

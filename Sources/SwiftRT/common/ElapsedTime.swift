@@ -17,6 +17,22 @@
 import Foundation
 
 //==============================================================================
+// String(timeInterval:
+extension String {
+    @inlinable
+    public init(timeInterval: TimeInterval, precision: Int = 2) {
+        let remainder = modf(timeInterval).1
+        let interval = Int(timeInterval)
+        let seconds = interval % 60
+        let minutes = (interval / 60) % 60
+        let hours = (interval / 3600)
+        let remStr = String(format: "%.\(precision)f", remainder)
+        self = String(format: "%0.2d:%0.2d:%0.2d.\(remStr)",
+                      hours, minutes, seconds)
+    }
+}
+
+//==============================================================================
 /// elapsedTime
 /// used to measure and log a set of `body` iterations
 @discardableResult
@@ -62,13 +78,13 @@ func logTimings(_ label: String, _ timings: [TimeInterval],
                 _ average: TimeInterval, _ precision: Int)
 {
     let avgStr = String(timeInterval: average, precision: precision)
-    Platform.log.write(level: .status, message:
+    Context.log.write(level: .status, message:
         "\(label) time: \(avgStr)")
     for i in 0..<timings.count {
         let timeStr = String(format: "%.\(precision)f", timings[i])
-        Platform.log.write(level: .status,
+        Context.log.write(level: .status,
                            message: "Run: \(i) time: \(timeStr)")
     }
-    Platform.log.write(level: .status, message: "")
+    Context.log.write(level: .status, message: "")
 }
 

@@ -21,145 +21,137 @@ import Numerics
 /// - Parameter rhs: right hand tensor
 /// - Returns: result
 @inlinable
-public func add<T>(_ lhs: T, _ rhs: T) -> T
-    where T: TensorView, T.Element: AdditiveArithmetic
+public func add<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>) -> Tensor<S,E>
+    where S: TensorShape, E: AdditiveArithmetic
 {
-    Platform.service.add(lhs, rhs)
+    /// REMOVE THIS
+    let (lhs, rhs) = match(lhs, rhs)
+    assert(lhs.shape == rhs.shape)
+
+    var result = Tensor(like: lhs)
+    Context.currentQueue.add(lhs, rhs, &result)
+    return result
 }
 
-@inlinable
+//@differentiable(where T: DifferentiableTensor)
+@inlinable public func add<S,E>(_ lhs: Tensor<S,E>, _ rhs: E) -> Tensor<S,E>
+    where S: TensorShape, E: AdditiveArithmetic
+{
+    add(lhs, repeating(rhs, like: lhs))
+}
+
+//@differentiable(where T: DifferentiableTensor)
+@inlinable public func add<S, E>(_ lhs: E, _ rhs: Tensor<S,E>) -> Tensor<S,E>
+    where S: TensorShape, E: AdditiveArithmetic
+{
+    add(repeating(lhs, like: rhs), rhs)
+}
+
 @derivative(of: add)
-func _vjpAdd<T>(lhs: T, rhs: T) ->
-    (value: T, pullback: (T) ->(T, T)) where T: DifferentiableTensorView
+@inlinable public func _vjpAdd<S, E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>)
+    -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) ->(Tensor<S,E>, Tensor<S,E>))
+    where S: TensorShape, E: DifferentiableElement
 {
-    Platform.service._vjpAdd(lhs, rhs)
+    (lhs + rhs, { v in (v, v) })
 }
 
-public extension PlatformService {
-    @inlinable
-    func add<T>(_ lhs: T, _ rhs: T) -> T
-        where T: TensorView, T.Element: AdditiveArithmetic
-    {
-        let (left, right) = implicitlyMatchExtents(lhs, rhs)
-        assert(left.bounds == right.bounds, _messageTensorExtentsMismatch)
-        var (result, resultBuffer) = createResult(like: left)
-        currentQueue.add(read(left), read(right), &resultBuffer)
-        return result
+public extension Tensor where Element: AdditiveArithmetic {
+    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func +(lhs: Self, rhs: Self) -> Self {
+        add(lhs, rhs)
     }
 
-    @inlinable
-    @differentiable(where T: DifferentiableTensorView)
-    func add<T>(_ lhs: T, _ rhs: T.Element) -> T
-        where T: TensorView, T.Element: AdditiveArithmetic
-    {
-        add(lhs, T(repeating: rhs, to: lhs.bounds))
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func +(lhs: Self, rhs: Element) -> Self {
+        add(lhs, rhs)
     }
 
-    @inlinable
-    @differentiable(where T: DifferentiableTensorView)
-    func add<T>(_ lhs: T.Element, _ rhs: T) -> T
-        where T: TensorView, T.Element: AdditiveArithmetic
-    {
-        add(T(repeating: lhs, to: rhs.bounds), rhs)
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func +=(lhs: inout Self, rhs: Element) {
+        lhs = add(lhs, rhs)
     }
 
-    @inlinable
-    @derivative(of: add)
-    func _vjpAdd<T>(_ lhs: T, _ rhs: T) -> (value: T, pullback: (T) ->(T, T))
-        where T: DifferentiableTensorView
-    {
-        (lhs + rhs, { v in (v, v) })
-    }
-}
-
-public extension TensorView where Element: AdditiveArithmetic {
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func +(lhs: Self, rhs: Self) -> Self {
-        Platform.service.add(lhs, rhs)
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func +(lhs: Element, rhs: Self) -> Self {
+        add(lhs, rhs)
     }
 
-    @inlinable
-    static func += (lhs: inout Self, rhs: Element) {
-        lhs = add(lhs, Self(repeating: rhs, to: lhs.bounds))
-    }
-
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func +(lhs: Self, rhs: Element) -> Self {
-        Platform.service.add(lhs, rhs)
-    }
-
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func +(lhs: Element, rhs: Self) -> Self {
-        Platform.service.add(lhs, rhs)
+    // VectorProtocol
+    
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable func adding(_ x: Element) -> Self {
+        self + x
     }
 }
 
 //==============================================================================
 /// subtract
-/// peforms an elementwise subtract
+/// performs an elementwise subtract
 /// - Parameter lhs: left hand tensor
 /// - Parameter rhs: right hand tensor
 /// - Returns: result
 @inlinable
-public func subtract<T>(_ lhs: T, _ rhs: T) -> T
-    where T: TensorView, T.Element: AdditiveArithmetic
+//@differentiable(where T: DifferentiableTensor)
+public func subtract<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>) -> Tensor<S,E>
+    where S: TensorShape, E: AdditiveArithmetic
 {
-    Platform.service.subtract(lhs, rhs)
+    /// REMOVE THIS
+    let (lhs, rhs) = match(lhs, rhs)
+    assert(lhs.shape == rhs.shape)
+
+    var result = Tensor(like: lhs)
+    Context.currentQueue.subtract(lhs, rhs, &result)
+    return result
+}
+
+@inlinable
+public func subtract<S,E>(_ lhs: Tensor<S,E>, _ rhs: E) -> Tensor<S,E>
+    where S: TensorShape, E: AdditiveArithmetic
+{
+    subtract(lhs, repeating(rhs, like: lhs))
+}
+
+//@differentiable(where T: DifferentiableTensor)
+@inlinable public func subtract<S, E>(_ lhs: E, _ rhs: Tensor<S,E>) -> Tensor<S,E>
+    where S: TensorShape, E: AdditiveArithmetic
+{
+    subtract(repeating(lhs, like: rhs), rhs)
 }
 
 @derivative(of: subtract)
-@inlinable
-public func _vjpSubtract<T>(lhs: T, rhs: T) ->
-    (value: T, pullback: (T) ->(T, T)) where T: DifferentiableTensorView
+@inlinable public func _vjpSubtract<S, E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>)
+    -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) ->(Tensor<S,E>, Tensor<S,E>))
+    where S: TensorShape, E: DifferentiableElement
 {
-    Platform.service._vjpSubtract(lhs, rhs)
+    (lhs - rhs, { v in (v, E.zero - v) })
 }
 
-public extension PlatformService {
-    @inlinable
-    func subtract<T>(_ lhs: T, _ rhs: T) -> T
-        where T: TensorView, T.Element: AdditiveArithmetic
-    {
-        let (left, right) = implicitlyMatchExtents(lhs, rhs)
-        assert(left.bounds == right.bounds, _messageTensorExtentsMismatch)
-        var (result, resultBuffer) = createResult(like: left)
-        currentQueue.subtract(read(left), read(right), &resultBuffer)
-        return result
+public extension Tensor where Element: AdditiveArithmetic {
+    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func -(lhs: Self, rhs: Self) -> Self {
+        subtract(lhs, rhs)
     }
-        
-    @inlinable
-    @derivative(of: subtract)
-    func _vjpSubtract<T>(_ lhs: T, _ rhs: T) ->
-        (value: T, pullback: (T) ->(T, T))
-        where T: DifferentiableTensorView
-    {
-        (lhs - rhs, { v in (v, T.zero - v) })
-    }
-}
 
-public extension TensorView where Element: AdditiveArithmetic {
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func - (lhs: Self, rhs: Self) -> Self { subtract(lhs, rhs) }
-
-    @inlinable
-    static func -= (lhs: inout Self, rhs: Element) {
-        lhs = subtract(lhs, Self(repeating: rhs, like: lhs))
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func -(lhs: Self, rhs: Element) -> Self {
+        subtract(lhs, rhs)
     }
+
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func -=(lhs: inout Self, rhs: Element) {
+        lhs = subtract(lhs, rhs)
+    }
+
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func -(lhs: Element, rhs: Self) -> Self {
+        subtract(lhs, rhs)
+    }
+
+    // VectorProtocol
     
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func - (lhs: Self, rhs: Element) -> Self {
-        subtract(lhs, Self(repeating: rhs, to: lhs.bounds))
-    }
-
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func - (lhs: Element, rhs: Self) -> Self {
-        subtract(Self(repeating: lhs, to: rhs.bounds), rhs)
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable func subtracting(_ x: Element) -> Self {
+        self - x
     }
 }
 
@@ -170,66 +162,59 @@ public extension TensorView where Element: AdditiveArithmetic {
 /// - Parameter rhs: right hand tensor.
 /// - Returns: a new tensor containing the result
 @inlinable
-public func mul<T>(_ lhs: T, _ rhs: T) -> T
-    where T: TensorView, T.Element: Numeric
+public func mul<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>) -> Tensor<S,E>
+    where S: TensorShape, E: Numeric
 {
-    Platform.service.mul(lhs, rhs)
+    /// REMOVE THIS
+    let (lhs, rhs) = match(lhs, rhs)
+    assert(lhs.shape == rhs.shape)
+
+    var result = Tensor(like: lhs)
+    Context.currentQueue.mul(lhs, rhs, &result)
+    return result
 }
 
-@inlinable
 @derivative(of: mul)
-func _vjpMultiply<T>(_ lhs: T, _ rhs: T) ->
-    (value: T, pullback: (T) -> (T, T)) where T: DifferentiableTensorView
+@inlinable func _vjpMultiply<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>) ->
+    (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> (Tensor<S,E>, Tensor<S,E>))
+    where S: TensorShape, E: DifferentiableElement
 {
-    Platform.service._vjpMultiply(lhs, rhs)
+    (lhs * rhs, { v in (v * rhs, v * lhs) })
 }
 
-public extension PlatformService {
-    @inlinable
-    func mul<T>(_ lhs: T, _ rhs: T) -> T
-        where T: TensorView, T.Element: Numeric
-    {
-        let (left, right) = implicitlyMatchExtents(lhs, rhs)
-        assert(left.bounds == right.bounds, _messageTensorExtentsMismatch)
-        var (result, resultBuffer) = createResult(like: left)
-        currentQueue.mul(read(left), read(right), &resultBuffer)
-        return result
-    }
-    
-    @inlinable
-    @derivative(of: mul)
-    func _vjpMultiply<T>(_ lhs: T, _ rhs: T) ->
-        (value: T, pullback: (T) -> (T, T)) where T: DifferentiableTensorView
-    {
-        (lhs * rhs, { v in (v * rhs, v * lhs) })
-    }
-}
+public extension Tensor where Element: Numeric
+{
+    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func * (lhs: Self, rhs: Self) -> Self { mul(lhs, rhs) }
 
-public extension TensorView where Element: Numeric {
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func * (lhs: Self, rhs: Self) -> Self { mul(lhs, rhs) }
-    
-    @inlinable
-    static func *= (lhs: inout Self, rhs: Element) {
-        lhs = mul(lhs, Self(repeating: rhs, to: lhs.bounds))
+    @inlinable static func *= (lhs: inout Self, rhs: Element) {
+        lhs = mul(lhs, repeating(rhs, like: lhs))
     }
 
-    @inlinable
-    static func *= (lhs: inout Self, rhs: Self) {
+    @inlinable static func *= (lhs: inout Self, rhs: Self) {
         lhs = lhs * rhs
     }
-    
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func * (lhs: Self, rhs: Element) -> Self {
-        mul(lhs, Self(repeating: rhs, to: lhs.bounds))
+
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func * (lhs: Self, rhs: Element) -> Self {
+        mul(lhs, repeating(rhs, like: lhs))
     }
 
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func * (lhs: Element, rhs: Self) -> Self {
-        mul(Self(repeating: lhs, to: rhs.bounds), rhs)
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func * (lhs: Element, rhs: Self) -> Self {
+        mul(repeating(lhs, like: rhs), rhs)
+    }
+
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable func scaled(by scalar: Element) -> Self {
+        self * scalar
+    }
+
+    // TODO: this syntax is incorrect and is only here to conform to
+    // PointwiseMultiplicative and should be removed
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func .* (lhs: Self, rhs: Self) -> Self {
+        lhs * rhs
     }
 }
 
@@ -240,65 +225,50 @@ public extension TensorView where Element: Numeric {
 /// - Parameter rhs: right hand tensor.
 /// - Returns: a new tensor containing the result
 @inlinable
-public func div<T>(_ lhs: T, _ rhs: T) -> T
-    where T: TensorView, T.Element: AlgebraicField
+public func div<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>) -> Tensor<S,E>
+    where S: TensorShape, E: AlgebraicField
 {
-    Platform.service.div(lhs, rhs)
+    /// REMOVE THIS
+    let (lhs, rhs) = match(lhs, rhs)
+    assert(lhs.shape == rhs.shape)
+
+    var result = Tensor(like: lhs)
+    Context.currentQueue.div(lhs, rhs, &result)
+    return result
 }
 
-@inlinable
 @derivative(of: div)
-func _vjpDivide<T>(_ lhs: T, _ rhs: T) ->
-    (value: T, pullback: (T) -> (T, T)) where
-    T: DifferentiableTensorView, T.Element: AlgebraicField
+@inlinable func _vjpDivide<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>) ->
+    (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> (Tensor<S,E>, Tensor<S,E>))
+    where S: TensorShape, E: DifferentiableElement & AlgebraicField
 {
-    Platform.service._vjpDivide(lhs, rhs)
+    (lhs / rhs, { v in (v / rhs, -lhs / rhs.squared() * v) })
 }
 
-public extension PlatformService {
-    @inlinable
-    func div<T>(_ lhs: T, _ rhs: T) -> T
-        where T: TensorView, T.Element: AlgebraicField
-    {
-        let (left, right) = implicitlyMatchExtents(lhs, rhs)
-        assert(left.bounds == right.bounds, _messageTensorExtentsMismatch)
-        var (result, resultBuffer) = createResult(like: left)
-        currentQueue.div(read(left), read(right), &resultBuffer)
-        return result
-    }
+public extension Tensor where Element: AlgebraicField {
     
-    @inlinable
-    @derivative(of: div)
-    func _vjpDivide<T>(_ lhs: T, _ rhs: T) ->
-        (value: T, pullback: (T) -> (T, T)) where
-        T: DifferentiableTensorView, T.Element: AlgebraicField
-    {
-        (lhs / rhs, { v in (v / rhs, -lhs / rhs.squared() * v) })
-    }
-}
+    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func / (lhs: Self, rhs: Self) -> Self { div(lhs, rhs) }
 
-public extension TensorView where Element: AlgebraicField {
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func / (lhs: Self, rhs: Self) -> Self { div(lhs, rhs) }
-
-    @inlinable
-    static func /= (lhs: inout Self, rhs: Element) {
-        lhs = div(lhs, Self(repeating: rhs, to: lhs.bounds))
+    @inlinable static func /= (lhs: inout Self, rhs: Element) {
+        lhs = div(lhs, repeating(rhs, like: lhs))
     }
 
-    @inlinable
-    static func /= (lhs: inout Self, rhs: Self) { lhs = lhs / rhs }
+    @inlinable static func /= (lhs: inout Self, rhs: Self) { lhs = lhs / rhs }
 
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func / (lhs: Self, rhs: Element) -> Self {
-        div(lhs, Self(repeating: rhs, to: lhs.bounds))
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func / (lhs: Self, rhs: Element) -> Self {
+        div(lhs, Self(repeating: rhs, to: lhs.shape))
     }
 
-    @inlinable
-    @differentiable(where Self: DifferentiableTensorView)
-    static func / (lhs: Element, rhs: Self) -> Self {
-        div(Self(repeating: lhs, to: rhs.bounds), rhs)
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable static func / (lhs: Element, rhs: Self) -> Self {
+        div(Self(repeating: lhs, to: rhs.shape), rhs)
+    }
+
+    // PointwiseMultiplicative
+//    @differentiable(where Element: DifferentiableElement)
+    @inlinable var reciprocal: Self {
+        1 / self
     }
 }

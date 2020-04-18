@@ -21,11 +21,11 @@ class test_Initialize: XCTestCase {
     //==========================================================================
     // support terminal test run
     static var allTests = [
+        ("test_castElements", test_castElements),
         ("test_copy", test_copy),
         ("test_copyOnWrite", test_copyOnWrite),
         ("test_columnMajorDataView", test_columnMajorDataView),
         ("test_indenting", test_indenting),
-        ("test_padding", test_padding),
         ("test_perfCreateMatrix", test_perfCreateMatrix),
         ("test_perfReadOnlyAccess", test_perfReadOnlyAccess),
         ("test_perfReadWriteAccess", test_perfReadWriteAccess),
@@ -36,61 +36,59 @@ class test_Initialize: XCTestCase {
         ("test_repeatColVector", test_repeatColVector),
     ]
     
+
+    //--------------------------------------------------------------------------
+    // test_castElements
+    func test_castElements() {
+        let fMatrix = array(0..<6, (3, 2))
+        let iMatrix = Tensor2<Int32>(fMatrix)
+        XCTAssert(iMatrix == [[0, 1], [2, 3], [4, 5]])
+    }
+
     //--------------------------------------------------------------------------
     // test_copy
     // tests copying from source to destination view
     func test_copy() {
-        let v1 = IndexVector(1...3)
-        var v2 = IndexVector(repeatElement(0, count: 3))
-        SwiftRT.copy(from: v1, to: &v2)
-        XCTAssert(v1 == [1, 2, 3])
+        let a = array(1...3)
+        var b = array(repeatElement(0, count: 3))
+        SwiftRT.copy(from: a, to: &b)
+        XCTAssert(b == [1, 2, 3])
     }
     
     //--------------------------------------------------------------------------
     // test_copyOnWrite
-    // NOTE: uses the default queue
     func test_copyOnWrite() {
-//        Platform.log.level = .diagnostic
-        let m1 = Matrix(3, 2, with: 0..<6)
-        XCTAssert(m1[1, 1] == 3)
+//        Context.log.level = .diagnostic
+        let a = array(0..<6, (3, 2))
+        XCTAssert(a[1, 1] == 3)
         
-        // copy view sharing the same tensor array
-        var m2 = m1
-        XCTAssert(m2[1, 1] == 3)
+        // copy shares the same storage
+        var b = a
+        XCTAssert(b[1, 1] == 3)
         
-        // mutate m2
-        m2[1, 1] = 7
+        // mutate b
+        b[1, 1] = 7
         // m1's data should be unchanged
-        XCTAssert(m1[1, 1] == 3)
-        XCTAssert(m2[1, 1] == 7)
+        XCTAssert(a[1, 1] == 3)
+        XCTAssert(b[1, 1] == 7)
     }
     
     //--------------------------------------------------------------------------
     // test_columnMajorDataView
-    // NOTE: uses the default queue
     //   0, 1,
     //   2, 3,
     //   4, 5
     func test_columnMajorDataView() {
-        let cmMatrix = IndexMatrix(3, 2, with: [0, 2, 4, 1, 3, 5],
-                                   layout: .columnMajor)
-        XCTAssert(cmMatrix == 0..<6)
+        let cm = array([0, 2, 4, 1, 3, 5], (3, 2), dtype: Int.self, order: .F)
+        XCTAssert(cm == [[0, 1], [2, 3], [4, 5]])
     }
 
     //--------------------------------------------------------------------------
     // test_indenting
     func test_indenting() {
-        let v = Vector(0..<4)
-        let m = Matrix(indenting: v)
-        XCTAssert(m.bounds == [1, v.count])
-    }
-    
-    //--------------------------------------------------------------------------
-    // test_padding
-    func test_padding() {
-        let v = Vector(0..<4)
-        let m = Matrix(padding: v)
-        XCTAssert(m.bounds == [v.count, 1])
+        let a = array(0..<4)
+        let b = Tensor2<Float>(indenting: a)
+        XCTAssert(b.shape == [1, a.count])
     }
     
     //--------------------------------------------------------------------------
@@ -101,8 +99,8 @@ class test_Initialize: XCTestCase {
         var count = 0
         measure {
             for i in 1...iterations {
-                let matrix = Matrix(1, i)
-                count = matrix.count
+                let a = ones((1, i))
+                count = a.count
             }
         }
         XCTAssert(count == iterations)
@@ -115,11 +113,11 @@ class test_Initialize: XCTestCase {
         #if !DEBUG
         let iterations = 100000
         var value: Float = 0
-        let matrix = Matrix(2, 2, with: 1...4)
+        let a = array(1...4, (2, 2))
         
         measure {
             for _ in 1...iterations {
-                value += matrix.first
+                value += a[0, 0]
             }
         }
         XCTAssert(value > 0)
@@ -132,77 +130,76 @@ class test_Initialize: XCTestCase {
         #if !DEBUG
         let iterations = 100000
         let value: Float = 1
-        var matrix = Matrix(2, 2, with: 1...4)
-        
+        var a = array(1...4, (2, 2))
+
         measure {
             for _ in 1...iterations {
-                matrix[0, 0] += value
+                a[0, 0] += value
             }
         }
-        XCTAssert(matrix[0, 0] > 0)
+        XCTAssert(a[0, 0] > 0)
         #endif
     }
 
     //--------------------------------------------------------------------------
     // test_repeatElement
     func test_repeatElement() {
-        let value: Int32 = 42
-        let volume = IndexVolume(element: value).repeated(to: 2, 3, 10)
-        let expected = [Int32](repeating: value, count: volume.count)
-        XCTAssert(volume == expected)
+        let a = repeating(42, (2, 3, 10), dtype: Int32.self)
+        let expected = [Int32](repeating: 42, count: a.count)
+        XCTAssert(a.flatArray == expected)
     }
     
     //--------------------------------------------------------------------------
     // test_repeatRowVector
     func test_repeatRowVector() {
-        let matrix = IndexMatrix(1, 5, with: 0...4).repeated(to: 5, 5)
-        XCTAssert(matrix == [
-            0, 1, 2, 3, 4,
-            0, 1, 2, 3, 4,
-            0, 1, 2, 3, 4,
-            0, 1, 2, 3, 4,
-            0, 1, 2, 3, 4,
+        let m = repeating(array(0...4, (1, 5)), (5, 5))
+        XCTAssert(m == [
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 4],
+            [0, 1, 2, 3, 4],
         ])
     }
     
     //--------------------------------------------------------------------------
     // test_repeatColVector
     func test_repeatColVector() {
-        let matrix = IndexMatrix(5, 1, with: 0...4).repeated(to: 5, 5)
-        XCTAssert(matrix == [
-            0, 0, 0, 0, 0,
-            1, 1, 1, 1, 1,
-            2, 2, 2, 2, 2,
-            3, 3, 3, 3, 3,
-            4, 4, 4, 4, 4,
+        let m = repeating(array(0...4, (5, 1)), (5, 5))
+        XCTAssert(m == [
+            [0, 0, 0, 0, 0],
+            [1, 1, 1, 1, 1],
+            [2, 2, 2, 2, 2],
+            [3, 3, 3, 3, 3],
+            [4, 4, 4, 4, 4],
         ])
     }
     
     //--------------------------------------------------------------------------
     // test_concatMatrixRows
     func test_concatMatrixRows() {
-        let t1 = Matrix(2, 3, with: 1...6)
-        let t2 = Matrix(2, 3, with: 7...12)
-        let c3 = Matrix(concatenating: t1, t2)
-        XCTAssert(c3.bounds == [4, 3])
-        XCTAssert(c3 == [
-            1,  2,  3,
-            4,  5,  6,
-            7,  8,  9,
-            10, 11, 12,
+        let a = array(1...6, (2, 3))
+        let b = array(7...12, (2, 3))
+        let c = Tensor2<DType>(concatenating: a, b)
+        XCTAssert(c.shape == [4, 3])
+        XCTAssert(c == [
+            [1,  2,  3],
+            [4,  5,  6],
+            [7,  8,  9],
+            [10, 11, 12],
         ])
     }
 
     //--------------------------------------------------------------------------
     // test_concatMatrixCols
     func test_concatMatrixCols() {
-        let t1 = Matrix(2, 3, with: 1...6)
-        let t2 = Matrix(2, 3, with: 7...12)
-        let c3 = Matrix(concatenating: t1, t2, alongAxis: 1)
-        XCTAssert(c3.bounds == [2, 6])
-        XCTAssert(c3 == [
-            1,  2,  3, 7,  8,  9,
-            4,  5,  6, 10, 11, 12,
+        let a = array(1...6, (2, 3))
+        let b = array(7...12, (2, 3))
+        let c = Tensor2<DType>(concatenating: a, b, alongAxis: 1)
+        XCTAssert(c.shape == [2, 6])
+        XCTAssert(c == [
+            [1,  2,  3, 7,  8,  9],
+            [4,  5,  6, 10, 11, 12],
         ])
     }
 }

@@ -172,8 +172,8 @@ public struct LogInfo {
 public protocol Logging : _Logging {}
 
 public extension Logging {
-    @inlinable var logWriter: Log { Platform.log }
-    @inlinable var logLevel: LogLevel { Platform.log.level }
+    @inlinable var logWriter: Log { Context.log }
+    @inlinable var logLevel: LogLevel { Context.log.level }
     @inlinable var logNamePath: String { "" }
     @inlinable var logNestingLevel: Int { 0 }
 }
@@ -260,7 +260,10 @@ public extension LogWriter {
             
             // create fixed width string for level column
             let messageStr = message()
-            let messageTime = Date().timeIntervalSince(Platform.startTime)
+            // keep this on a separate line so that the start time
+            // is initialized before we take the current time
+            let startTime = Context.startTime
+            let messageTime = Date().timeIntervalSince(startTime)
             let levelStr = String(timeInterval: messageTime)
             let indent = String(repeating: " ",
                                 count: nestingLevel * self._tabSize)
@@ -285,13 +288,12 @@ public extension LogWriter {
 
 //==============================================================================
 // Log
-public final class Log: LogWriter, ObjectTracking {
+public final class Log: LogWriter {
     // properties
     public var categories: LogCategories?
     public var level: LogLevel
     public var _silent: Bool
     public var _tabSize: Int
-    public var trackingId: Int
     public let queue = DispatchQueue(label: "Log.queue")
     public let logFile: FileHandle
 
@@ -305,7 +307,6 @@ public final class Log: LogWriter, ObjectTracking {
     public init(url: URL? = nil, isStatic: Bool = true) {
         assert(url == nil || url!.isFileURL, "Log url must be a file URL")
         level = .error
-        trackingId = 0
         _silent = false
         _tabSize = 2
         var file: FileHandle?
@@ -325,14 +326,11 @@ public final class Log: LogWriter, ObjectTracking {
             }
         }
         logFile = file ?? FileHandle.standardOutput
-        trackingId = ObjectTracker.global.nextId
-        ObjectTracker.global.register(self, isStatic: isStatic)
     }
     
     @inlinable
     deinit {
         logFile.closeFile()
-        ObjectTracker.global.remove(trackingId: trackingId)
     }
     
     @inlinable

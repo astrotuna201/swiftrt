@@ -14,21 +14,84 @@
 // limitations under the License.
 //
 import Foundation
+import CCuda
+import Numerics
+//import CudaKernels
 
 //==============================================================================
 /// CudaQueue
 public final class CudaQueue: DeviceQueue {
     public let useGpu: Bool
     
+    public let stream: cudaStream_t
+    public let cudnn: CudnnHandle
+    public let cublas: CublasHandle
+
     //--------------------------------------------------------------------------
     // initializers
     @inlinable
     public init(id: Int, parent logInfo: LogInfo,
-                deviceId: Int, deviceName: String, useGpu: Bool)
+                deviceId: Int, deviceName: String, useGpu: Bool) throws
     {
         self.useGpu = useGpu
+        
+        // select the specified device
+        try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
+        
+        // create a queue associated with the device
+        let flags = UInt32(cudaStreamNonBlocking)
+        var cudaStream: cudaStream_t?
+        try cudaCheck(status: cudaStreamCreateWithFlags(&cudaStream, flags))
+        stream = cudaStream!
+        cudnn = try CudnnHandle(deviceId: deviceId, using: stream)
+        cublas = try CublasHandle(deviceId: deviceId, using: stream)
+
         super.init(id: id, parent: logInfo, deviceId: deviceId,
-                   deviceName: deviceName)
+                   deviceName: deviceName,
+                   memoryType: useGpu ? .discreet : .unified)
+    }
+    
+    //--------------------------------------------------------------------------
+    // select
+    public func selectDevice() throws {
+        try cudaCheck(status: cudaSetDevice(Int32(self.deviceId)))
+    }
+    
+    //==========================================================================
+    /// createActivation
+//    public override func createActivation<T>(
+//        x: T,
+//        y: inout T,
+//        mode: ActivationType,
+//        nan: NanPropagation,
+//        reluCeiling: Double = 0) throws -> ActivationInferring<T>
+//        where T: TensorView, T.Element: ScalarElement & FloatingPoint
+//    {
+//        return try CudaActivationInferring(x: x, y: &y, mode: mode,
+//                                           nan: nan, reluCeiling: reluCeiling)
+//    }
+
+    //==========================================================================
+    // convolution
+    public override func convolution<T, F>(
+        activation: ActivationType,
+        strides: T.Bounds,
+        padding: Padding,
+        dilations: T.Bounds,
+        properties: ConvolutionProperties,
+        device: ServiceDevice,
+        filterBiasBackpropQueueIndex: Int) throws -> CudaConvolution<T, F>
+        where
+        T: DifferentiableTensorView, T.Element: ScalarElement,
+        F: TensorView, F.Bounds == T.Bounds, F.Element: ScalarElement
+    {
+        try CudaConvolution(
+            activation: activation,
+            strides: strides,
+            padding: padding,
+            dilations: dilations,
+            properties: properties,
+            device: device,
+            filterBiasBackpropQueueIndex: filterBiasBackpropQueueIndex)
     }
 }
-

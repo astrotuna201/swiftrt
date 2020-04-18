@@ -18,17 +18,11 @@ import XCTest
 #if !canImport(ObjectiveC)
 public func allTests() -> [XCTestCaseEntry] {
     return [
-        testCase(test_Async.allTests),
-        testCase(test_BinaryFunctions.allTests),
-        testCase(test_Casting.allTests),
-        testCase(test_Codable.allTests),
-        testCase(test_Comparative.allTests),
-        testCase(test_DataMigration.allTests),
+        testCase(test_npArray.allTests),
+        testCase(test_AlgebraicField.allTests),
         testCase(test_Initialize.allTests),
-        testCase(test_IterateView.allTests),
-        testCase(test_Math.allTests),
-        testCase(test_Ranges.allTests),
         testCase(test_Reductions.allTests),
+        testCase(test_Subscripting.allTests),
         testCase(test_Shape.allTests),
     ]
 }

@@ -16,436 +16,634 @@
 import Foundation
 
 //==============================================================================
-/// ShapeProtocol
-public protocol ShapeProtocol: Codable, Equatable, Collection
-    where Element == Int
-{
-    associatedtype Bounds: ShapeBounds
+// TensorShape
+public protocol TensorShape: SIMD where Scalar == Int {
+    // a ranked tuple convenience type used for api parameters
+    associatedtype Tuple
     
-    // properties
-    /// the dense number of elements in the shape
-    var count: Int { get }
-    /// the bounds of the shape in each dimension
-    var bounds: Bounds { get }
-    /// `true` if indexing is row sequential for performance
-    var isSequential: Bool { get }
-    /// The strided number of elements spanned by the shape
-    var spanCount: Int { get }
-    /// The distance to the next element for each dimension
-    var strides: Bounds { get }
-        
-    /// init(extents:strides:
-    /// - Parameter bounds: bounds of the shape in each dimension
-    /// - Parameter strides: the distance to the next element in each dimension
-    /// A value of `nil` implies row major sequential element strides
-    init(_ bounds: Bounds, strides: Bounds?)
+    /// conversion to DeviceIndex to support drivers
+    var asDeviceIndex: [DeviceIndex] { get }
+    /// the number of bounding dimensions
+    static var rank: Int { get }
+    /// a tuple of ones
+    static var oneTuple: Tuple { get }
+    /// a tuple of zeros
+    static var zeroTuple: Tuple { get }
+
+    //---------------------------------
+    // convenience initializers
+    // the associated tuple type is used to make cleaner looking api arguments
+    init(_ shape: Tuple)
+    init?(_ shape: Tuple?)
+
+    //---------------------------------
+    /// - Returns: the number of elements described by the shape,
+    /// which is the product of the dimensions
+    func elementCount() -> Int
+
+    /// used to iterate the n-dimensional range `lower..<upper` as
+    /// a linear sequence of positions in spatial order
+    /// - Parameters:
+    ///  - lower: the lower bound of the iteration range
+    ///  - upper: the upper bound of the iteration range
+    func incremented(between lower: Self, and upper: Self) -> Self
+    
+    /// - Returns: srtides for the shape and given storage order
+    func strides(for order: StorageOrder) -> Self
 }
 
 //==============================================================================
-// messages
-@usableFromInline
-let _messageInvalidBounds = "bounding dimensions must be greater than 0"
+// Shapes
+public typealias Shape1 = SIMD1<Int>
+public typealias Shape2 = SIMD2<Int>
+public typealias Shape3 = SIMD3<Int>
+public typealias Shape4 = SIMD4<Int>
+public typealias Shape5 = SIMD5<Int>
+public typealias Shape6 = SIMD6<Int>
 
 //==============================================================================
-// ShapeProtocol extensions
-extension ShapeProtocol {
-    /// array
-    @inlinable
-    public var array: [Int] { [Int](self) }
-    /// `true` if the shape has zero elements
-    @inlinable
-    public var isEmpty: Bool { count == 0 }
-    /// `true` if the shape has one element
-    @inlinable
-    public var isScalar: Bool { count == 1 }
-    /// the number of items in extent 0
-    @inlinable
-    public var items: Int { bounds[0] }
-    /// returns a dense version of self
-    @inlinable
-    public var dense: Self { isSequential ? self : Self(bounds: bounds) }
-    /// the static rank of the shape
-    @inlinable
-    @_transparent
-    public static var rank: Int { Bounds.rank }
+// messages
+public let _messageInvalidShape = "shape dimensions must be greater than 0"
 
+//==============================================================================
+// TensorShape extensions
+public extension TensorShape {
+    
     //--------------------------------------------------------------------------
-    // getSpanCount
-    // A sub view may cover a wider range of parent element indexes
-    // than the number of dense elements defined by the bounds of the view
-    // due to striding.
-    // The span of the bounds is the linear index of the last index + 1
-    @inlinable
-    public static func spanCount(for bounds: Bounds, with strides: Bounds)-> Int
-    {
-        ((bounds &- 1) &* strides).wrappedSum() + 1
+    /// init with optional tuple shape
+    @inlinable @_transparent
+    init?(_ shape: Tuple?) {
+        guard let shape = shape else { return nil }
+        self.init(shape)
     }
 
     //--------------------------------------------------------------------------
-    /// `elementCount`
-    /// the count of logical elements described by bounds
-    @inlinable
-    public static func elementCount(of bounds: Bounds) -> Int {
-        bounds.indices.reduce(into: 1) { $0 &*= bounds[$1] }
-    }
+    /// instance member access
+    @inlinable @_transparent
+    var count: Int { Self.rank }
 
     //--------------------------------------------------------------------------
-    /// `sequentialStrides(bounds:`
-    /// - Returns: the row major sequential strides for the given bounds
-    @inlinable
-    public static func sequentialStrides(for bounds: Bounds) -> Bounds {
-        var strides = Bounds.one
-        for i in stride(from: Self.rank - 1, through: 1, by: -1) {
-            strides[i - 1] = bounds[i] * strides[i]
-        }
-        return strides
+    /// copy to Swift Array
+    @inlinable @_transparent
+    var array: [Scalar] {
+        var a = [Scalar]()
+        indices.forEach { a.append(self[$0]) }
+        return a
     }
     
     //--------------------------------------------------------------------------
-    // linearIndex
-    @inlinable
-    public func linearIndex(of position: Bounds) -> Int {
-        (position &* strides).wrappedSum()
+    /// conversion to DeviceIndex array to support marshalling to drivers
+    @inlinable @_transparent
+    var asDeviceIndex: [DeviceIndex] {
+        var index = [DeviceIndex]()
+        indices.forEach { index.append(DeviceIndex(self[$0])) }
+        return index
     }
 
     //--------------------------------------------------------------------------
-    // init(bounds:
-    @inlinable
-    public init(bounds: Bounds) {
-        self.init(bounds, strides: nil)
+    /// helper
+    @inlinable @_transparent
+    mutating func swapAt(_ a: Int, _ b: Int) {
+        let tmp = self[a]
+        self[a] = self[b]
+        self[b] = tmp
     }
     
     //--------------------------------------------------------------------------
-    // init(expanding:
-    @inlinable
-    public init<S>(expanding other: S, alongAxes axes: Set<Int>? = nil)
-        where S: ShapeProtocol
-    {
-        assert(S.rank < Self.rank, "can only expand lower ranked shapes")
-        var newBounds = Bounds.zero
-        var newStrides = Bounds.zero
-        let axesSet = axes == nil ?
-            Set(0..<Self.rank - S.rank) :
-            Set(axes!.map { $0 < 0 ? $0 + Self.rank : $0 })
-        assert(S.rank + axesSet.count == Self.rank,
-               "`other.rank` plus number of specified axes " +
-            "must equal the `rank` of this shape")
-
-        var j = S.rank - 1
-        for i in (0..<Self.rank).reversed() {
-            if axesSet.contains(i) {
-                // expanded axes are set to 1
-                newBounds[i] = 1
-                // repeat stride of next dimension or pad with 1
-                if i == Self.rank - 1 {
-                    newStrides[i] = 1
-                } else {
-                    newStrides[i] = newBounds[i + 1] * newStrides[i + 1]
-                }
+    // generic n-dimensional position increment function
+    @inlinable func incremented(between lower: Self, and upper: Self) -> Self {
+        var next = self
+        var dim = Self.rank &- 1
+        while true {
+            next[dim] &+= 1
+            if next[dim] < upper[dim] {
+                break
+            } else if dim > 0 {
+                next[dim] = lower[dim]
+                dim &-= 1
             } else {
-                newBounds[i] = other.bounds[j]
-                newStrides[i] = other.strides[j]
-                j -= 1
+                break
             }
         }
-        self.init(newBounds, strides: newStrides)
+        return next
     }
     
     //--------------------------------------------------------------------------
-    // init(indenting:
-    @inlinable
-    public init<S>(indenting other: S) where S: ShapeProtocol {
-        assert(S.rank < Self.rank, "can only indent lower ranked shapes")
-
-        // Self and other are different ranks so we append other's elements
-        let start = Self.rank - S.rank
-        var newBounds = Bounds.one
-        var newStrides = Bounds.one
-        for (i, j) in zip(start..<Self.rank, 0..<S.rank) {
-            newBounds[i] = other.bounds[j]
-            newStrides[i] = other.strides[j]
-        }
-        for i in 0..<start {
-            newStrides[i] = other.strides[0]
-        }
-        
-        self.init(newBounds, strides: newStrides)
-    }
-    
-    //--------------------------------------------------------------------------
-    // init(padding:
-    @inlinable
-    public init<S>(padding other: S) where S: ShapeProtocol {
-        assert(S.rank < Self.rank, "can only pad lower ranked shapes")
-        
-        // Self and other are different ranks so we copy the leading elements
-        var newBounds = Bounds.one
-        var newStrides = Bounds.one
-        for i in 0..<S.rank {
-            newBounds[i] = other.bounds[i]
-            newStrides[i] = other.strides[i]
-        }
-        self.init(newBounds, strides: newStrides)
-    }
-    
-    //--------------------------------------------------------------------------
-    // init(squeezing:
-    @inlinable
-    public init<S>(squeezing other: S, alongAxes axes: Set<Int>? = nil)
-        where S: ShapeProtocol
+    /// `reduce
+    /// - Parameters:
+    ///  - initialResult: the initial result value
+    ///  - updateAccumulatingResult: accumulation functions
+    @inlinable func reduce(
+        into initialResult: Scalar,
+        _ updateAccumulatingResult: (inout Scalar, Scalar) -> ()) -> Scalar
     {
-        // make sure we have a positive set of axes to squeeze along
-        var newBounds = Bounds.zero
-        var newStrides = Bounds.zero
-        let axesSet = axes == nil ?
-            Set(0..<S.rank) :
-            Set(axes!.map { $0 < 0 ? S.rank + $0 : $0 })
-
-        var axis = 0
-        for otherAxis in 0..<S.rank where
-            !(other.bounds[otherAxis] == 1 && axesSet.contains(otherAxis))
-        {
-            assert(axis < Self.rank,
-                   "Unsqueezed axes of `other` exceeds rank of this shape")
-            newBounds[axis] = other.bounds[otherAxis]
-            newStrides[axis] = other.strides[otherAxis]
-            axis += 1
+        indices.reduce(into: initialResult) {
+            updateAccumulatingResult(&$0, self[$1])
         }
-        self.init(newBounds, strides: newStrides)
+    }
+
+    //--------------------------------------------------------------------------
+    /// elementCount
+    /// - Returns: the number of spatial elements bounded by the shape
+    @inlinable func elementCount() -> Int {
+        self.reduce(into: 1, &*=)
     }
     
     //--------------------------------------------------------------------------
-    // init(flattening:
-    @inlinable
-    public init<S>(flattening other: S) where S: ShapeProtocol {
-        assert(other.isSequential, "cannot flatten non sequential data")
-        assert(S.rank >= Self.rank, "cannot flatten bounds of lower rank")
-
-        // copy the leading dimensions
-        var bounds = Bounds.zero
-        for i in 0..<Self.rank {
-            bounds[i] = other.bounds[i]
+    /// index
+    /// - Parameters:
+    ///  - strides: the strides for shape
+    /// - Returns: linear strided index
+    @inlinable func index(stridedBy strides: Self) -> Int {
+        (self &* strides).wrappedSum()
+    }
+    
+    //--------------------------------------------------------------------------
+    /// spanCount
+    /// - Parameters:
+    ///  - strides: the strides for shape
+    /// - Returns: the distance from the first element's linear storage index
+    ///   to the last
+    @inlinable func spanCount(stridedBy strides: Self) -> Int {
+        ((self &- 1) &* strides).wrappedSum() &+ 1
+    }
+    
+    //--------------------------------------------------------------------------
+    /// `strides(order:`
+    /// computes the strides needed to index the specified storage order
+    @inlinable func strides(for order: StorageOrder) -> Self {
+        guard Self.rank > 1 else { return Self.one }
+        
+        func computeStrides(for shape: Self) -> Self {
+            // just use shape to reserve some storage space for strides
+            var strides = shape
+            var dim = Self.rank - 1
+            var shapeStride = 1
+            while dim >= 0 {
+                strides[dim] = shapeStride
+                shapeStride &*= shape[dim]
+                dim &-= 1
+            }
+            return strides
         }
 
-        // get product of the remaining dimensions
-        for j in Self.rank..<S.rank {
-            bounds[Self.rank-1] *= other.bounds[j]
+        if order == .C {
+            // row major
+            return computeStrides(for: self)
+            
+        } else {
+            // col major
+            var shape = self
+            shape.swapAt(Self.rank - 1, Self.rank - 2)
+            var strides = computeStrides(for: shape)
+            strides.swapAt(Self.rank - 1, Self.rank - 2)
+            return strides
         }
-        self = Self(bounds: bounds)
+    }
+
+    //--------------------------------------------------------------------------
+    /// `areSequential`
+    /// - Parameter shape: the bounding shape for the strides
+    /// - Returns: `true` if `self` are sequential strides for the given shape
+    @inlinable func areSequential(for shape: Self) -> Bool {
+        var dim = Self.rank - 1
+        var shapeStride = 1
+        while dim >= 0 {
+            if self[dim] != shapeStride && shape[dim] > 1 {
+                return false
+            }
+            shapeStride &*= shape[dim]
+            dim &-= 1
+        }
+        return true
     }
     
     //--------------------------------------------------------------------------
     /// joined
-    /// - Parameter others: array of data shapes to join
-    /// - Parameter axis: the joining axis
-    /// - Returns: returns a new shape that is the join with the others
-    @inlinable
-    public func joined(with others: [Self], alongAxis axis: Int) -> Self {
-        var newBounds = bounds
-        newBounds[axis] += others.reduce(into: 0) { $0 += $1.bounds[axis] }
-        return Self(bounds: newBounds)
-    }
-    
-    //--------------------------------------------------------------------------
-    /// makePositive(bounds:
-    /// The user can specify indices from `-rank..<rank`.
-    /// Negative numbers reference dimensions from the end of `bounds`
-    /// This ensures they are resolved to positive values.
-    @inlinable
-    public static func makePositive(bounds: Bounds) -> Bounds {
-        var positive = bounds
-        for i in 0..<Bounds.rank where positive[i] < 0 {
-            positive[i] += Bounds.rank
-        }
-        return positive
+    /// - Parameters:
+    ///  - others: array of shapes to join
+    ///  - axis: the axis to join
+    /// - Returns: the joined shape
+    @inlinable func joined(with others: [Self], alongAxis axis: Int) -> Self {
+        var joinedShape = self
+        joinedShape[axis] += others.reduce(into: 0) { $0 += $1[axis] }
+        return joinedShape
     }
 
     //--------------------------------------------------------------------------
-    /// contains
-    @inlinable
-    public func contains(_ point: Bounds) -> Bool {
-        linearIndex(of: point) <= spanCount
-    }
-
-    @inlinable
-    public func contains(other: Self) -> Bool {
-        other.spanCount <= spanCount
-    }
-
-    //--------------------------------------------------------------------------
-    /// columnMajor
-    @inlinable
-    public var columnMajor: Self {
-        // return self if already column major
-        guard strides[Self.rank-1] < strides[Self.rank-2] else { return self }
-        // compute column major strides for the last 2 dimensions
-        var cmBounds = bounds
-        cmBounds.swapAt(Self.rank-1, Self.rank-2)
-        var cmStrides = cmBounds.sequentialStrides()
-        cmStrides.swapAt(Self.rank-1, Self.rank-2)
-        return Self(bounds, strides: cmStrides)
-    }
-    
-    //--------------------------------------------------------------------------
-    /// repeated(repeatedBounds:
-    @inlinable
-    public func repeated(to repeatedBounds: Bounds) -> Self {
-        // make sure the bounds are compatible
-        assert({
-            for i in 0..<Self.rank {
-                if bounds[i] != 1 && bounds[i] != repeatedBounds[i] {
-                    return false
-                }
-            }
-            return true
-        }(), "repeated tensor bounds must be either 1" +
-            " or match the repeated tensor bounds")
-
-        // compute strides, setting stride to 0 for repeated dimensions
-        var repeatedStrides = Bounds.zero
-        for i in 0..<Self.rank where repeatedBounds[i] == bounds[i] {
-            repeatedStrides[i] = strides[i]
-        }
+    /// init(flattening:
+    /// - Parameter other: the shape to flatten
+    @inlinable init<S>(flattening other: S) where S: TensorShape {
+        assert(S.rank >= Self.rank, "cannot flatten shape of lower rank")
         
-        // it is sequential only for vectors
-        return Self(repeatedBounds, strides: repeatedStrides)
-    }
-
-    //--------------------------------------------------------------------------
-    /// transposed(with permutations:
-    /// Returns a new data shape where the bounds and strides are permuted
-    /// - Parameter permutations: the indice order mapping. `count` must
-    ///   equal `rank`
-    /// - Returns: transposed/permuted shape
-    /// - Precondition: Each value in `permutations` must be in the range
-    ///   `-rank..<rank`
-    @inlinable
-    public func transposed(with permutations: Bounds? = nil) -> Self {
-        guard Self.rank > 1 else { return self }
-        var newBounds = bounds
-        var newStrides = strides
-
-        // determine the new bounds and strides
-        if let perm = permutations {
-            let mapping = Self.makePositive(bounds: perm)
-            for index in 0..<Self.rank {
-                newBounds[index] = bounds[mapping[index]]
-                newStrides[index] = strides[mapping[index]]
-            }
-        } else {
-            // simple swap of last two dimensions
-            newBounds.swapAt(Self.rank-1, Self.rank-2)
-            newStrides.swapAt(Self.rank-1, Self.rank-2)
+        // copy the leading dimensions
+        self = Self.zero
+        for i in 0..<Self.rank {
+            self[i] = other[i]
         }
-        
-        return Self(newBounds, strides: newStrides)
+
+        // get product of the remaining dimensions
+        for j in Self.rank..<S.rank {
+            self[Self.rank-1] *= other[j]
+        }
     }
 }
 
 //==============================================================================
-// Collection
-extension ShapeProtocol
-{
-    @inlinable
-    public var startIndex: ShapeIndex<Bounds> {
-        ShapeIndex<Bounds>(Bounds.zero, 0)
+// SIMD1
+extension SIMD1: TensorShape where Scalar == Int {
+    //--------------------------------------------------------------------------
+    // tuple initialization support
+    public typealias Tuple = (Scalar)
+    public static var oneTuple: Tuple { (1) }
+    public static var zeroTuple: Tuple { (0) }
+
+    @inlinable @_transparent
+    public init(_ shape: Tuple) {
+        self.init()
+        self[0] = shape
     }
 
-    @inlinable
-    public var endIndex: ShapeIndex<Bounds> {
-        ShapeIndex<Bounds>(Bounds.zero, count)
+    //--------------------------------------------------------------------------
+    @inlinable @_transparent
+    public static var rank: Int { 1 }
+    
+    @inlinable public func elementCount() -> Int {
+        self[0]
     }
     
-    // returns the strided linear index corresponding
-    // to the n-dimensional logical position
+    @inlinable public func sequentialStrides() -> Self {
+        Self(1)
+    }
+    
     @inlinable
-    public subscript(index: ShapeIndex<Bounds>) -> Int {
-        if isSequential {
-            return index.sequenceIndex
-        } else {
-            return (index.position &* strides).wrappedSum()
-        }
+    public func incremented(between lower: Self, and upper: Self) -> Self {
+        assert(self[0] >= lower[0])
+        var next = self
+        next[0] &+= 1
+        return next
+    }
+}
+
+//==============================================================================
+// SIMD2
+extension SIMD2: TensorShape where Scalar == Int {
+    //--------------------------------------------------------------------------
+    // tuple initialization support
+    public typealias Tuple = (Scalar, Scalar)
+    public static var oneTuple: Tuple { (1, 1) }
+    public static var zeroTuple: Tuple { (0, 0) }
+
+    @inlinable @_transparent
+    public init(_ shape: Tuple) {
+        self.init()
+        self[0] = shape.0
+        self[1] = shape.1
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable @_transparent
+    public static var rank: Int { 2 }
+    
+    @inlinable
+    public func elementCount() -> Int {
+        self[0] &* self[1]
     }
 
     @inlinable
-    public func index(after i: ShapeIndex<Bounds>) -> ShapeIndex<Bounds> {
-        var next = i
-        next.sequenceIndex += 1
-        if !isSequential {
-            next.position.increment(boundedBy: bounds)
+    public func sequentialStrides() -> Self {
+        Self(self[1], 1)
+    }
+
+    @inlinable
+    public func incremented(between lower: Self, and upper: Self) -> Self {
+        assert(self[0] >= lower[0] && self[1] >= lower[1])
+        var next = self
+        next[1] &+= 1
+        if next[1] == upper[1] {
+            next[1] = lower[1]
+            next[0] &+= 1
         }
         return next
     }
 }
 
 //==============================================================================
-// Equatable
-extension ShapeProtocol {
+// SIMD3
+extension SIMD3: TensorShape where Scalar == Int {
+    //--------------------------------------------------------------------------
+    // tuple initialization support
+    public typealias Tuple = (Scalar, Scalar, Scalar)
+    public static var oneTuple: Tuple { (1, 1, 1) }
+    public static var zeroTuple: Tuple { (0, 0, 0) }
+
+    @inlinable @_transparent
+    public init(_ shape: Tuple) {
+        self.init()
+        self[0] = shape.0
+        self[1] = shape.1
+        self[2] = shape.2
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable @_transparent
+    public static var rank: Int { 3 }
+    
     @inlinable
-    public static func == (_ lhs: Self, _ rhs: [Int]) -> Bool {
-        lhs.array == rhs
+    public func incremented(between lower: Self, and upper: Self) -> Self {
+        assert({for i in 0..<Self.rank { if self[i] < lower[i] { return false }}
+            return true}())
+        var next = self
+
+        next[2] &+= 1
+        if next[2] == upper[2] {
+            next[2] = lower[2]
+            next[1] &+= 1
+            
+            if next[1] == upper[1] {
+                next[1] = lower[1]
+                next[0] &+= 1
+            }
+        }
+        return next
     }
 }
 
 //==============================================================================
-/// ShapeIndex
-public struct ShapeIndex<Bounds>: Comparable where Bounds: ShapeBounds {
-    /// the logical position along each axis
-    public var position: Bounds
-    /// linear sequence position
-    public var sequenceIndex: Int
+// SIMD4
+extension SIMD4: TensorShape where Scalar == Int {
+    //--------------------------------------------------------------------------
+    // tuple initialization support
+    public typealias Tuple = (Scalar, Scalar, Scalar, Scalar)
+    public static var oneTuple: Tuple { (1, 1, 1, 1) }
+    public static var zeroTuple: Tuple { (0, 0, 0, 0) }
 
-    //------------------------------------
-    // initializers
-    @inlinable
-    public init(_ position: Bounds, _ sequenceIndex: Int) {
-        self.position = position
-        self.sequenceIndex = sequenceIndex
+    @inlinable @_transparent
+    public init(_ shape: Tuple) {
+        self.init()
+        self[0] = shape.0
+        self[1] = shape.1
+        self[2] = shape.2
+        self[3] = shape.3
     }
 
-    //------------------------------------
-    // Equatable
+    //--------------------------------------------------------------------------
+    @inlinable @_transparent
+    public static var rank: Int { 4 }
+
     @inlinable
-    public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.sequenceIndex == rhs.sequenceIndex
-    }
-    
-    //------------------------------------
-    // Comparable
-    @inlinable
-    public static func < (lhs: Self, rhs: Self) -> Bool {
-        lhs.sequenceIndex < rhs.sequenceIndex
+    public func incremented(between lower: Self, and upper: Self) -> Self {
+        assert({for i in 0..<Self.rank { if self[i] < lower[i] { return false }}
+            return true}())
+        var next = self
+
+        next[3] &+= 1
+        if next[3] == upper[3] {
+            next[3] = lower[3]
+            next[2] &+= 1
+            
+            if next[2] == upper[2] {
+                next[2] = lower[2]
+                next[1] &+= 1
+                
+                if next[1] == upper[1] {
+                    next[1] = lower[1]
+                    next[0] &+= 1
+                }
+            }
+        }
+        return next
     }
 }
 
 //==============================================================================
-// Shape
-public struct Shape<Bounds: ShapeBounds>: ShapeProtocol
-{
-    public typealias Index = ShapeIndex<Bounds>
-    
-    // properties
-    public let count: Int
-    public let bounds: Bounds
-    public let isSequential: Bool
-    public let spanCount: Int
-    public let strides: Bounds
+// SIMD5
+extension SIMD5: TensorShape where Scalar == Int {
+    //--------------------------------------------------------------------------
+    // tuple initialization support
+    public typealias Tuple = (Scalar, Scalar, Scalar, Scalar, Scalar)
+    public static var oneTuple: Tuple { (1, 1, 1, 1, 1) }
+    public static var zeroTuple: Tuple { (0, 0, 0, 0, 0) }
+
+    @inlinable @_transparent
+    public init(_ shape: Tuple) {
+        self.init()
+        self[0] = shape.0
+        self[1] = shape.1
+        self[2] = shape.2
+        self[3] = shape.3
+        self[4] = shape.4
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable @_transparent
+    public static var rank: Int { 5 }
+
+    @inlinable
+    public func incremented(between lower: Self, and upper: Self) -> Self {
+        assert({for i in 0..<Self.rank { if self[i] < lower[i] { return false }}
+            return true}())
+        var next = self
+
+        next[4] &+= 1
+        if next[4] == upper[4] {
+            next[4] = lower[4]
+            next[3] &+= 1
+            
+            if next[3] == upper[3] {
+                next[3] = lower[3]
+                next[2] &+= 1
+                
+                if next[2] == upper[2] {
+                    next[2] = lower[2]
+                    next[1] &+= 1
+                    
+                    if next[1] == upper[1] {
+                        next[1] = lower[1]
+                        next[0] &+= 1
+                    }
+                }
+            }
+        }
+        return next
+    }
+}
+
+//==============================================================================
+// SIMD6
+extension SIMD6: TensorShape where Scalar == Int {
+    //--------------------------------------------------------------------------
+    // tuple initialization support
+    public typealias Tuple = (Scalar, Scalar, Scalar, Scalar, Scalar, Scalar)
+    public static var oneTuple: Tuple { (1, 1, 1, 1, 1, 1) }
+    public static var zeroTuple: Tuple { (0, 0, 0, 0, 0, 0) }
+
+    @inlinable @_transparent
+    public init(_ shape: Tuple) {
+        self.init()
+        self[0] = shape.0
+        self[1] = shape.1
+        self[2] = shape.2
+        self[3] = shape.3
+        self[4] = shape.4
+        self[5] = shape.5
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable @_transparent
+    public static var rank: Int { 6 }
     
     @inlinable
-    public init(_ bounds: Bounds, strides: Bounds? = nil) {
-        assert(bounds.min() > 0, _messageInvalidBounds)
-        self.bounds = bounds
-        self.count = bounds.elementCount()
-        let sequentialStrides = bounds.sequentialStrides()
+    public func incremented(between lower: Self, and upper: Self) -> Self {
+        assert({for i in 0..<Self.rank { if self[i] < lower[i] { return false }}
+            return true}())
+        var next = self
 
-        if let callerStrides = strides {
-            self.strides = callerStrides
-            self.spanCount =  ((bounds &- 1) &* callerStrides).wrappedSum() + 1
-            self.isSequential = callerStrides == sequentialStrides
-        } else {
-            self.strides = sequentialStrides
-            self.spanCount = self.count
-            self.isSequential = true
+        next[5] &+= 1
+        if next[5] == upper[4] {
+            next[5] = lower[5]
+            next[4] &+= 1
+            
+            if next[4] == upper[4] {
+                next[4] = lower[4]
+                next[3] &+= 1
+                
+                if next[3] == upper[3] {
+                    next[3] = lower[3]
+                    next[2] &+= 1
+                    
+                    if next[2] == upper[2] {
+                        next[2] = lower[2]
+                        next[1] &+= 1
+                        
+                        if next[1] == upper[1] {
+                            next[1] = lower[1]
+                            next[0] &+= 1
+                        }
+                    }
+                }
+            }
+        }
+        return next
+    }
+}
+
+//==============================================================================
+// additional SIMD types to fill in range
+// https://github.com/apple/swift/blob/master/stdlib/public/core/SIMDVectorTypes.swift.gyb
+// This isn't actually used to do SIMD operations, but merely as
+// a placeholder to satisfy Shape1 Bounds conformance
+@frozen public struct SIMD1<Scalar>: SIMD where Scalar: SIMDScalar {
+    public var _storage: Scalar.SIMD2Storage
+    public typealias MaskStorage = SIMD1<Scalar.SIMDMaskScalar>
+    
+    /// The number of scalars in the vector.
+    @_transparent
+    public var scalarCount: Int { 1 }
+    
+    /// Creates a vector with zero in all lanes.
+    @_transparent
+    public init() {
+        _storage = Scalar.SIMD2Storage()
+    }
+    
+    @_transparent
+    public init(_ v0: Scalar) {
+        self.init()
+        self[0] = v0
+    }
+    
+    /// Accesses the scalar at the specified position.
+    public subscript(index: Int) -> Scalar {
+        @_transparent get {
+            assert(indices.contains(index))
+            return _storage[index]
+        }
+        @_transparent set {
+            assert(indices.contains(index))
+            _storage[index] = newValue
+        }
+    }
+
+}
+
+// to support 5D tensors
+@frozen public struct SIMD5<Scalar>: SIMD where Scalar: SIMDScalar {
+    public var _storage: Scalar.SIMD8Storage
+    public typealias MaskStorage = SIMD5<Scalar.SIMDMaskScalar>
+    
+    /// The number of scalars in the vector.
+    @_transparent
+    public var scalarCount: Int { 5 }
+    
+    /// Creates a vector with zero in all lanes.
+    @_transparent
+    public init() {
+        _storage = Scalar.SIMD8Storage()
+    }
+
+    @_transparent
+    public init(_ v0: Scalar, _ v1: Scalar, _ v2: Scalar,
+                _ v3: Scalar, _ v4: Scalar
+    ) {
+        self.init()
+        self[0] = v0
+        self[1] = v1
+        self[2] = v2
+        self[3] = v3
+        self[4] = v4
+    }
+    
+    /// Accesses the scalar at the specified position.
+    public subscript(index: Int) -> Scalar {
+        @_transparent get {
+            assert(indices.contains(index))
+            return _storage[index]
+        }
+        @_transparent set {
+            assert(indices.contains(index))
+            _storage[index] = newValue
+        }
+    }
+}
+
+// to support 6D tensors
+@frozen public struct SIMD6<Scalar>: SIMD where Scalar: SIMDScalar {
+    public var _storage: Scalar.SIMD8Storage
+    public typealias MaskStorage = SIMD6<Scalar.SIMDMaskScalar>
+    
+    /// The number of scalars in the vector.
+    @_transparent
+    public var scalarCount: Int { 6 }
+    
+    /// Creates a vector with zero in all lanes.
+    @_transparent
+    public init() {
+        _storage = Scalar.SIMD8Storage()
+    }
+
+    @_transparent
+    public init(_ v0: Scalar, _ v1: Scalar, _ v2: Scalar, _ v3: Scalar,
+                _ v4: Scalar, _ v5: Scalar
+    ) {
+        self.init()
+        self[0] = v0
+        self[1] = v1
+        self[2] = v2
+        self[3] = v3
+        self[4] = v4
+        self[5] = v5
+    }
+    
+    /// Accesses the scalar at the specified position.
+    public subscript(index: Int) -> Scalar {
+        @_transparent get {
+            assert(indices.contains(index))
+            return _storage[index]
+        }
+        @_transparent set {
+            assert(indices.contains(index))
+            _storage[index] = newValue
         }
     }
 }
