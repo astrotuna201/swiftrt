@@ -232,10 +232,13 @@ open class DeviceQueue: Logging {
     }
 
     @inlinable
-    func add<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>,
-                  _ result: inout Tensor<S,E>)
+    public func add<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>,
+                         _ result: inout Tensor<S,E>)
         where S: TensorShape, E: AdditiveArithmetic
     {
+        lhs.read(using: self)
+        rhs.read(using: self)
+        result.readWrite(using: self)
         mapOp(lhs, rhs, &result, +)
     }
 
@@ -302,7 +305,9 @@ open class DeviceQueue: Logging {
     func copy<S,E>(from x: Tensor<S,E>, to result: inout Tensor<S,E>)
         where S: TensorShape
     {
-        zip(result.indices, x).forEach { result[$0] = $1 }
+        x.read(using: self)
+        result.readWrite(using: self)
+        mapOp(x, &result) { $0 }
     }
 
     @inlinable

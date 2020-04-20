@@ -65,6 +65,20 @@ class test_Subscripting: XCTestCase {
         XCTAssert(count > 0)
         #endif
     }
+
+    //==========================================================================
+    // test_writeToRepeated
+    func test_writeToRepeated() {
+//        Context.log.level = .diagnostic
+        // test through subscript
+        var a = repeating(1, (2, 3))
+        a[1, 1] = 42
+        XCTAssert(a == [[1, 1, 1], [1, 42, 1]])
+
+        // test assigning range through subscript
+        a[0..<1, ...] = repeating(2, (1, 3))
+        XCTAssert(a == [[2, 2, 2], [1, 42, 1]])
+    }
     
     //==========================================================================
     // test_negativeIndexRelativeRange
