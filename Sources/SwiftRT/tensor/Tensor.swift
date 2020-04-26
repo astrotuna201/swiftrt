@@ -34,7 +34,7 @@ public struct Tensor<Shape, Element>: MutableTensorType
     // gpu dispatch decision making
     public let isSequential: Bool
     /// the dimensions of the element space
-    public let shape: Shape
+    @noDerivative public let shape: Shape
     // used by makeIndex
     public let shapeStrides: Shape
     /// The strided number of elements spanned by the shape
@@ -248,7 +248,7 @@ public extension Tensor {
     ///  - position: the n-dimensional coordinate position within `shape`
     /// - Returns: the index
     @inlinable func makeIndex(at position: Shape) -> Index {
-        Index(position, position.index(stridedBy: shapeStrides))
+        Index(position, baseOffset + position.index(stridedBy: shapeStrides))
     }
 
     //--------------------------------------------------------------------------
@@ -279,11 +279,12 @@ public extension Tensor {
                 return storage.element(at: baseOffset)
             } else if isSequential {
                 // most tensors are layed out sequentially, so it is much
-                // cheaper to use the sequencePosition
+                // cheaper to use the sequencePosition. The `baseOffset`
+                // is included during index initialization
                 return storage.element(at: i.sequencePosition)
             } else {
                 // perform a full strided buffer index calculation
-                return storage.element(at: baseOffset + i.linearIndex(strides))
+                return storage.element(at: baseOffset &+ i.linearIndex(strides))
             }
         }
         
@@ -294,13 +295,14 @@ public extension Tensor {
                 storage.setElement(value: newValue, at: i.sequencePosition)
             } else {
                 storage.setElement(value: newValue,
-                                   at: baseOffset + i.linearIndex(strides))
+                                   at: baseOffset &+ i.linearIndex(strides))
             }
         }
     }
 
     //--------------------------------------------------------------------------
     // sub view subscript
+    @differentiable(where Element: DifferentiableElement)
     @inlinable subscript(lower: Shape, upper: Shape) -> Self {
         get { createView(lower, upper, isShared) }
         set {
@@ -439,7 +441,6 @@ public extension Tensor {
 public extension Tensor {
     /// first
     /// - Returns: the first element in the tensor
-    @_semantics("autodiff.nonvarying")
     @inlinable var first: Element {
         storage.element(at: baseOffset)
     }
@@ -447,7 +448,7 @@ public extension Tensor {
     /// element
     /// can get and set the value of a single element tensor.
     /// - Returns: the only element in the tensor
-    @_semantics("autodiff.nonvarying")
+    @differentiable(where Element: DifferentiableElement)
     @inlinable var element: Element {
         get {
             assert(count == 1, "the `element` property expects " +
@@ -459,6 +460,18 @@ public extension Tensor {
                 "the tensor to have a single Element")
             storage.setElement(value: newValue, at: baseOffset)
         }
+    }
+
+    @derivative(of: element)
+    @inlinable func vjpElement() -> (
+      value: Element,
+      pullback: (Element) -> Self
+    ) where Element: DifferentiableElement {
+      (element, { v in
+        var result = zeros(like: self)
+        result.element = v
+        return result
+      })
     }
 }
 

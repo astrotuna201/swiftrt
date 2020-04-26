@@ -15,33 +15,28 @@
 //
 
 //==============================================================================
-/// TestCpuService
-/// This is used only for testing. It is an asynchronous cpu version
-/// that reports having discreet memory instead of unified to exercise
-/// memory management unit tests
-public class TestCpuService: Platform {
+/// CpuService
+/// The collection of compute resources available to the application
+/// on the machine where the process is being run.
+public class CpuService: Platform {
     // properties
     public let devices: [CpuDevice]
     public let logInfo: LogInfo
     public let name: String
-    public var queueStack: [QueueId]
+    public var queueStack: [Device.Queue]
 
     //--------------------------------------------------------------------------
     @inlinable
     public init() {
-        self.name = "TestCpuService"
-        self.logInfo = LogInfo(logWriter: Context.log,
-                               logLevel: .error,
-                               namePath: self.name,
-                               nestingLevel: 0)
-        self.devices = [
-            CpuDevice(parent: logInfo, memoryType: .unified,  id: 0),
-            CpuDevice(parent: logInfo, memoryType: .discreet, id: 1),
-            CpuDevice(parent: logInfo, memoryType: .discreet, id: 2),
+        name = "CpuService"
+        logInfo = LogInfo(logWriter: Context.log, logLevel: .error,
+                          namePath: name, nestingLevel: 0)
+        devices = [
+            CpuDevice(parent: logInfo, memoryType: .unified, id: 0)
         ]
         
         // select device 0 queue 0 by default
-        self.queueStack = []
-        self.queueStack = [ensureValidId(0, 0)]
+        queueStack = []
+        queueStack = [validQueue(0, 0)]
     }
 }

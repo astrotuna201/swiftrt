@@ -62,7 +62,13 @@ public extension Tensor {
                   baseOffset: 0,
                   order: order,
                   share: false,
-                  isSequential: true)
+                  isSequential: order == .C)
+    }
+    
+    //--------------------------------------------------------------------------
+    /// init
+    @inlinable init() {
+        self.init(Shape.zero)
     }
     
     //--------------------------------------------------------------------------
@@ -501,18 +507,21 @@ extension Tensor where Element: DifferentiableElement
 ///  - axis: the axis to stack along
 public extension Tensor {
 
-    //    @differentiable(where Element: DifferentiableElement)
+    @differentiable(where Element: DifferentiableElement)
     @inlinable init<S>(
         stacking others: [Tensor<S,Element>],
         axis: Int = 0
     ) where S: TensorShape
     {
+        // make positive
+        let positiveAxis = axis < 0 ? axis + S.rank : axis
         // create tensor of stacked shape and copy
-        self = Self(stackedShape(of: others, along: axis))
-        stack(others, axis: axis, into: &self)
+        self = withoutDerivative(
+            at: Self(stackedShape(of: others, along: positiveAxis)))
+        stack(others, axis: positiveAxis, into: &self)
     }
     
-//    @differentiable(where Element: DifferentiableElement)
+    @differentiable(where Element: DifferentiableElement)
     @inlinable init<S>(stacking others: Tensor<S,Element>..., axis: Int = 0) {
         self.init(stacking: others, axis: axis)
     }
@@ -526,6 +535,7 @@ public extension Tensor {
     along axis: Int = 0
 ) -> SR where S: TensorShape, SR: TensorShape
 {
+    assert(axis >= 0)
     var j = 0
     var stackedShape = SR.zero
     stackedShape[axis] = tensors.count
@@ -542,12 +552,16 @@ public extension Tensor {
 ///  - others: the collection to squeeze
 ///  - axis: the axis to stack along
 ///  - result: the output tensor
-@inlinable func stack<S,SR,E>(
+@differentiable(where E: DifferentiableElement)
+@inlinable public func stack<S,SR,E>(
     _ tensors: [Tensor<S,E>],
     axis: Int = 0,
     into result: inout Tensor<SR,E>
 ) where S: TensorShape, SR: TensorShape
 {
+    // make positive
+    let axis = axis < 0 ? axis + SR.rank : axis
+
     // verify that tensors are the correct rank and same shape
     assert(tensors.count > 0 && S.rank == SR.rank - 1,
            "stacked tensors must be one less than result rank \(S.rank - 1)")
@@ -572,6 +586,50 @@ public extension Tensor {
         result[lower, lower &+ tensor.shape] = tensor
         lower[axis] += 1
     }
+}
+
+@derivative(of: stack)
+func vjpStack<S,SR,E>(
+    _ tensors: [Tensor<S,E>],
+    axis: Int = 0,
+    into result: inout Tensor<SR,E>
+) -> (value: (), pullback: (inout Tensor<SR, E>.TangentVector)
+        -> Array<Tensor<S, E>>.TangentVector)
+where S: TensorShape, SR: TensorShape
+{
+    let tensorCount = tensors.count
+    func pullback(_ resultTangent: inout Tensor<SR, E>.TangentVector)
+    -> Array<Tensor<S, E>>.TangentVector
+    {
+        // Fill `tensorTangents` with slices of `resultTangent` of shape
+        // `tensorShapes[0]`, `tensorShapes[1]`, etc.
+        var tensorTangents: [Tensor<S, E>] = []
+        var lower = SR.zero
+        var upper = resultTangent.shape
+        upper[axis] = 1
+        for _ in 0..<tensorCount {
+            let slice = Tensor<S,E>(squeezing: resultTangent[lower, upper],
+                                    axes: Shape1(axis))
+            tensorTangents.append(slice)
+            lower[axis] += 1
+            upper[axis] += 1
+        }
+
+        // Set `resultTangent` to zero.
+        // Note: We can't use `fill(_:with:)` because `resultTangent` aliases
+        // `tensorTangents`.
+        // TODO: track and fix
+        // Note: https://bugs.swift.org/browse/TF-1250 will allow us to make
+        // this pullback more efficient. How:
+        // - Set the wrt parameters and results to
+        //     @differentiable(wrt: (tensors), results: (result))
+        // - This makes `resultTangent` not be inout, so we don't need to set
+        //   it any more.
+        resultTangent = zeros(like: resultTangent)
+
+        return Array.DifferentiableView(tensorTangents)
+    }
+    return (stack(tensors, axis: axis, into: &result), pullback)
 }
 
 //==============================================================================
@@ -619,6 +677,7 @@ public extension Tensor {
 ///   `-rank..<rank`
 public extension Tensor {
 
+    @differentiable(where Element: DifferentiableElement)
     @inlinable init(
         transposing other: Self,
         permutatedBy permutations: Shape? = nil)
@@ -661,10 +720,35 @@ public extension Tensor {
     }
     
     /// - Returns: transpose of self
+    @differentiable(where Element: DifferentiableElement)
     @inlinable var t: Self { Self(transposing: self) }
     
+    @differentiable(where Element: DifferentiableElement)
     @inlinable func transposed(permutatedBy permutations: Shape.Tuple) -> Self {
         Self(transposing: self, permutatedBy: Shape(permutations))
+    }
+}
+
+extension Tensor where Element: DifferentiableElement {
+    
+    @derivative(of: init(transposing:permutatedBy:))
+    @inlinable static func _vjpInit(
+        transposing other: Self,
+        permutatedBy permutations: Shape?
+    ) -> (value: Self, pullback: (Self) -> Self)
+    {
+        let value = Self(transposing: other, permutatedBy: permutations)
+        return (value, {
+            Self(shape: other.shape,
+                 strides: other.strides,
+                 count: other.count,
+                 spanCount: other.count,
+                 storage: $0.storage,
+                 baseOffset: $0.baseOffset,
+                 order: $0.storageOrder,
+                 share: $0.isShared,
+                 isSequential: other.isSequential)
+        })
     }
 }
 

@@ -28,7 +28,9 @@ class test_Shape: XCTestCase {
         ("test_transposed", test_transposed),
         ("test_squeezing", test_squeezing),
         ("test_stacking", test_stacking),
+        ("test_stackingGradients", test_stackingGradients),
         ("test_stackingExpression", test_stackingExpression),
+        ("testTransposedPullback", testTransposedPullback),
     ]
 
     //--------------------------------------------------------------------------
@@ -52,6 +54,13 @@ class test_Shape: XCTestCase {
         // R1 -> R3
         let b3 = reshape(a1, (2, 2, 3))
         XCTAssert(b3 == [[[0, 1, 2], [3, 4, 5]], [[6, 7, 8], [9, 10, 11]]])
+        
+        let input = ones((2, 4))
+        let reshapedPullback = pullback(at: input) {
+            reshape($0, (2, 2, 2))
+        }
+        let reshaped = ones((2, 2, 2))
+        XCTAssertEqual(input, reshapedPullback(reshaped))
     }
     
     //--------------------------------------------------------------------------
@@ -80,33 +89,47 @@ class test_Shape: XCTestCase {
         XCTAssert(c.shape == [1, 1, 4, 1])
         XCTAssert(c.strides == [4, 4, 1, 1])
         XCTAssert(c == [[[[0], [1], [2], [3]]]])
+
+        // test derivatives
+        func f1(a: Tensor1<Float>) -> Tensor2<Float> { expand(dims: a, axis: 0).squared() }
+        func f2(a: Tensor1<Float>) -> Tensor2<Float> { expand(dims: a.squared(), axis: 0) }
+        XCTAssert(pullback(at: array([3, 5]), in: f1)(array([[1, 1]])) == [6, 10])
+        XCTAssert(pullback(at: array([3, 5]), in: f2)(array([[1, 1]])) == [6, 10])
     }
     
     //--------------------------------------------------------------------------
     // test_squeezing
     func test_squeezing() {
-//        let volume = Volume(2, 3, 4, with: 0..<24)
-//
-//        let sumVolumeCols = volume.sum(alongAxes: 2)
-//        XCTAssert(sumVolumeCols.bounds == [2, 3, 1])
-//        let m0 = Matrix(squeezing: sumVolumeCols)
-//        XCTAssert(m0.bounds == [2, 3])
-//
-//        let sumVolumeRows = volume.sum(alongAxes: 1)
-//        XCTAssert(sumVolumeRows.bounds == [2, 1, 4])
-//        let m2 = Matrix(squeezing: sumVolumeRows, alongAxes: 1)
-//        XCTAssert(m2.bounds == [2, 4])
-//
-//        // test negative axes
-//        let m3 = Matrix(squeezing: sumVolumeRows, alongAxes: -2)
-//        XCTAssert(m3.bounds == [2, 4])
-//
-//        do {
-//            let ones = Matrix(repeating: 1, to: 2, 12)
-//            let g = pullback(at: sumVolumeRows,
-//                             in: { Matrix(squeezing: $0, alongAxes: 1) })(ones)
-//            XCTAssert(g == [Float](repeating: 1, count: 24))
-//        }
+        let a = array(0..<24, (2, 3, 4))
+
+        let sumCols = a.sum(alongAxes: 2)
+        XCTAssert(sumCols.shape == [2, 3, 1])
+        let b = squeeze(sumCols, axis: -1)
+        XCTAssert(b == [
+            [6.0, 22.0, 38.0],
+            [54.0, 70.0, 86.0]
+        ])
+
+        let sumRows = a.sum(alongAxes: 1)
+        XCTAssert(sumRows.shape == [2, 1, 4])
+        let c = squeeze(sumRows, axis: 1)
+        XCTAssert(c == [
+            [12.0, 15.0, 18.0, 21.0],
+            [48.0, 51.0, 54.0, 57.0]
+        ])
+        
+        // test negative axes
+        let d = squeeze(sumRows, axis: -2)
+        XCTAssert(d == [
+            [12.0, 15.0, 18.0, 21.0],
+            [48.0, 51.0, 54.0, 57.0]
+        ])
+
+        // test derivatives
+        func f1(a: Tensor2<Float>) -> Tensor1<Float> { squeeze(a, axis: 0).squared() }
+        func f2(a: Tensor2<Float>) -> Tensor1<Float> { squeeze(a.squared(), axis: 0) }
+        XCTAssert(pullback(at: array([[3, 5]]), in: f1)(array([1, 1])) == [[6, 10]])
+        XCTAssert(pullback(at: array([[3, 5]]), in: f2)(array([1, 1])) == [[6, 10]])
     }
 
     //--------------------------------------------------------------------------
@@ -135,6 +158,20 @@ class test_Shape: XCTestCase {
     }
     
     //--------------------------------------------------------------------------
+    // test_stackingGradients
+    func test_stackingGradients() {
+        let a1 = array([1, 2, 3, 4, 5])
+        let b1 = array([6, 7, 8, 9, 10])
+        let a2 = array([1, 1, 1, 1, 1])
+        let b2 = array([1, 1, 1, 1, 1])
+        let grads = gradient(at: a2, b2) { a, b in
+            stack(a1 * a, b1 * b, axis: -1).sum().element
+        }
+        XCTAssertEqual(a1, grads.0)
+        XCTAssertEqual(b1, grads.1)
+    }
+
+    //--------------------------------------------------------------------------
     // test_stackingExpression
     func test_stackingExpression() {
 //        Context.log.level = .diagnostic
@@ -154,20 +191,6 @@ class test_Shape: XCTestCase {
                                  [true, true, true],
                                  [false, false, false],
                                  [false, false, false]])
-        
-//        let s0 = k1[0...j, 1...i]
-//        let s1 = k1[0...j, 2...i+1]
-//        let s2 = k1[1...j+1, 1...i]
-//        let s3 = k1[1...j+1, 2...i+1]
-//        let stacked = stack(s0, s1, s2, s3)
-//        let maxStack = stacked.max(alongAxes: 0)
-//        let sq = squeeze(maxStack, axis: 0)
-//        let m = sq .<= maxK
-//
-//        XCTAssert(m == [[true, true, true],
-//                        [true, true, true],
-//                        [false, false, false],
-//                        [false, false, false]])
     }
     
     //--------------------------------------------------------------------------
@@ -334,5 +357,23 @@ class test_Shape: XCTestCase {
                              [[ 3.0, 15.0],
                               [ 7.0, 19.0],
                               [11.0, 23.0]]])
+    }
+    
+    //--------------------------------------------------------------------------
+    // testTransposedPullback
+    func testTransposedPullback() {
+        let input = ones((2, 3))
+        let transposed = ones((3, 2))
+        let transposedPullback = pullback(at: input) { $0.t }
+        let transposedPermutationsPullback = pullback(at: input) {
+            $0.transposed(permutatedBy: (1, 0))
+        }
+        let transposedVariadicsPullback = pullback(at: input) {
+            $0.transposed(permutatedBy: (1, 0))
+        }
+        
+        XCTAssertEqual(input, transposedPullback(transposed))
+        XCTAssertEqual(input, transposedPermutationsPullback(transposed))
+        XCTAssertEqual(input, transposedVariadicsPullback(transposed))
     }
 }
