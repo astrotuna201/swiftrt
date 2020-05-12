@@ -54,14 +54,6 @@ extension DeviceQueue where Self: CpuFunctions & CpuMapOps
     @inlinable func atanh<S,E>(_ x: Tensor<S,E>, _ result: inout Tensor<S,E>)
     where S: TensorShape, E: Real { cpu_atanh(x, &result) }
     //--------------------------------------------------------------------------
-    @inlinable func batchMatmul<S,E>(
-        _ lhs: Tensor<S,E>, _ transposeLhs: Bool,
-        _ rhs: Tensor<S,E>, _ transposeRhs: Bool,
-        _ result: inout Tensor<S,E>
-    ) where S: TensorShape, E: Numeric {
-        cpu_batchMatmul(lhs, transposeLhs, rhs, transposeRhs, &result)
-    }
-    //--------------------------------------------------------------------------
     @inlinable func cast<S, E, RE>(from buffer: Tensor<S,E>,
                                    to result: inout Tensor<S,RE>)
     where S: TensorShape, E: BinaryFloatingPoint, RE: BinaryInteger
@@ -153,11 +145,19 @@ extension DeviceQueue where Self: CpuFunctions & CpuMapOps
     @inlinable func logGamma<S,E>(_ x: Tensor<S,E>, _ result: inout Tensor<S,E>)
     where S: TensorShape, E: Real { cpu_logGamma(x, &result) }
     //--------------------------------------------------------------------------
-    @inlinable func matmul<S,E>(
-        _ lhs: Tensor<S,E>, _ transposeLhs: Bool,
-        _ rhs: Tensor<S,E>, _ transposeRhs: Bool,
-        _ result: inout Tensor<S,E>
-    ) where S: TensorShape, E: Numeric {
+    @inlinable func matmul<E>(
+        _ lhs: TensorR2<E>, _ transposeLhs: Bool,
+        _ rhs: TensorR2<E>, _ transposeRhs: Bool,
+        _ result: inout TensorR2<E>
+    ) where E: Numeric {
+        cpu_matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
+    }
+    //--------------------------------------------------------------------------
+    @inlinable func matmul<E>(
+        _ lhs: TensorR3<E>, _ transposeLhs: Bool,
+        _ rhs: TensorR3<E>, _ transposeRhs: Bool,
+        _ result: inout TensorR3<E>
+    ) where E: Numeric {
         cpu_matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
     }
     //--------------------------------------------------------------------------
@@ -201,6 +201,9 @@ extension DeviceQueue where Self: CpuFunctions & CpuMapOps
     @inlinable func root<S,E>(_ x: Tensor<S,E>, _ n: Int,
                               _ result: inout Tensor<S,E>)
     where S: TensorShape, E: Real { cpu_root(x, n, &result) }
+    //--------------------------------------------------------------------------
+    @inlinable func sigmoid<S,E>(_ x: Tensor<S,E>, _ result: inout Tensor<S,E>)
+    where S: TensorShape, E: Real { cpu_sigmoid(x, &result) }
     //--------------------------------------------------------------------------
     @inlinable func sign<S,E>(_ x: Tensor<S,E>, _ result: inout Tensor<S,E>)
     where S: TensorShape, E: Real { cpu_sign(x, &result) }
@@ -307,15 +310,6 @@ extension CpuFunctions where Self: DeviceQueue & CpuMapOps
                                    _ result: inout Tensor<S,E>)
     where S: TensorShape, E: Real {
         mapOp(y, x, &result) { .atan2(y: $0, x: $1) }
-    }
-    
-    //--------------------------------------------------------------------------
-    @inlinable func cpu_batchMatmul<S,E>(
-        _ lhs: Tensor<S,E>, _ transposeLhs: Bool,
-        _ rhs: Tensor<S,E>, _ transposeRhs: Bool,
-        _ result: inout Tensor<S,E>
-    ) where S: TensorShape, E: Numeric {
-        fatalError("TODO")
     }
     
     //--------------------------------------------------------------------------
@@ -497,14 +491,52 @@ extension CpuFunctions where Self: DeviceQueue & CpuMapOps
     }
     
     //--------------------------------------------------------------------------
-    @inlinable func cpu_matmul<S,E>(
-        _ lhs: Tensor<S,E>, _ transposeLhs: Bool,
-        _ rhs: Tensor<S,E>, _ transposeRhs: Bool,
-        _ result: inout Tensor<S,E>
-    ) where S: TensorShape, E: Numeric {
-        fatalError("TODO")
+    @inlinable func cpu_matmul<E>(
+        _ lhs: TensorR2<E>, _ transposeLhs: Bool,
+        _ rhs: TensorR2<E>, _ transposeRhs: Bool,
+        _ result: inout TensorR2<E>
+    ) where E: Numeric {
+        let lhs = transposeLhs ? lhs.t : lhs
+        let rhs = transposeRhs ? rhs.t : rhs
+        assert(result.shape[0] == lhs.shape[0] &&
+                result.shape[1] == rhs.shape[1],
+               "matmul inner dimensions must be equal")
+        //-------------------------------
+        // simple place holder
+        for r in 0..<result.shape[0] {
+            let row = lhs[r, ...]
+            for c in 0..<result.shape[1] {
+                let col = rhs[..., c]
+                result[r, c] = zip(row, col).reduce(into: 0) { $0 += $1.0 * $1.1 }
+            }
+        }
     }
-
+    
+    //--------------------------------------------------------------------------
+    @inlinable func cpu_matmul<E>(
+        _ lhs: TensorR3<E>, _ transposeLhs: Bool,
+        _ rhs: TensorR3<E>, _ transposeRhs: Bool,
+        _ result: inout TensorR3<E>
+    ) where E: Numeric {
+        let lhs = transposeLhs ? lhs.t : lhs
+        let rhs = transposeRhs ? rhs.t : rhs
+        assert(result.shape[0] == lhs.shape[0] &&
+                result.shape[1] == lhs.shape[1] &&
+                result.shape[2] == rhs.shape[2],
+               "matmul inner dimensions must be equal")
+        //-------------------------------
+        // simple place holder
+        for n in 0..<result.shape[0] {
+            for r in 0..<result.shape[1] {
+                let row = lhs[n, r, ...]
+                for c in 0..<result.shape[2] {
+                    let col = rhs[n, ..., c]
+                    result[n, r, c] = zip(row, col).reduce(into: 0) { $0 += $1.0 * $1.1 }
+                }
+            }
+        }
+    }
+    
     //--------------------------------------------------------------------------
     @inlinable func cpu_max<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>,
                                  _ result: inout Tensor<S,E>)
@@ -574,6 +606,12 @@ extension CpuFunctions where Self: DeviceQueue & CpuMapOps
                                   _ result: inout Tensor<S,E>)
     where S: TensorShape, E: Real {
         mapOp(x, &result) { .root($0, n) }
+    }
+    
+    //--------------------------------------------------------------------------
+    @inlinable func cpu_sigmoid<S,E>(_ x: Tensor<S,E>, _ result: inout Tensor<S,E>)
+    where S: TensorShape, E: Real {
+        mapOp(x, &result) { 1 / (1 + .exp(-$0)) }
     }
     
     //--------------------------------------------------------------------------

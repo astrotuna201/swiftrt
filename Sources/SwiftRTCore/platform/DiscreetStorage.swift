@@ -13,178 +13,181 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+import Foundation
 
 //==============================================================================
 /// DiscreetStorage
-/// A synchronous host memory element storage buffer
 public final class DiscreetStorage<Element>: StorageBuffer
 {
-    public let hostBuffer: UnsafeMutableBufferPointer<Element>
+    /// the number of storage elements
+    public let count: Int
+    /// unique storage id used in diagnostic messages
     public let id: Int
+    /// `true` if the storage is read only
     public let isReadOnly: Bool
+    /// `true` if the storage is a reference to externally
+    /// managed memory
     public let isReference: Bool
+    /// the index of the last memory buffer written to
+    public var master: Int
+    /// the name of the storage used in diagnostic messages
     public var name: String
-    public var element: Element
-    
-    //--------------------------------------------------------------------------
-    // init(count:name:
-    @inlinable public init(count: Int) {
-        self.hostBuffer = UnsafeMutableBufferPointer.allocate(capacity: count)
-        self.id = Context.nextBufferId
-        self.isReadOnly = false
-        self.isReference = false
-        self.name = "Tensor"
-        self.element = hostBuffer[0]
+    /// replicated device memory buffers
+    public var replicas: [DeviceMemory<Element>?]
 
-        #if DEBUG
-        diagnostic("\(createString) \(name)(\(id)) " +
-            "\(Element.self)[\(count)]", categories: .dataAlloc)
-        #endif
+    /// the host transfer buffer
+    @inlinable public var hostBuffer: UnsafeMutableBufferPointer<Element> {
+        assert(master == 0, "`read` or `readWrite` on device 0" +
+               " must be called prior to access")
+        return replicas[0]!.buffer
     }
 
+    //--------------------------------------------------------------------------
+    // init(count:
+    @inlinable public init(count: Int) {
+        self.count = count
+        id = Context.nextBufferId
+        isReadOnly = false
+        isReference = false
+        master = -1
+        name = "Tensor"
+        let deviceCount = Context.local.platform.devices.count
+        replicas = [DeviceMemory<Element>?](repeating: nil, count: deviceCount)
+
+        #if DEBUG
+        diagnostic("\(createString) \(diagnosticName) " +
+                    "\(Element.self)[\(count)]", categories: .dataAlloc)
+        #endif
+    }
+    
     //--------------------------------------------------------------------------
     // init(element:
-    @inlinable public init(single element: Element) {
-        self.element = element
-        self.id = Context.nextBufferId
-        self.isReadOnly = false
-        self.isReference = true
-        self.name = "Tensor"
-
-        // point buffer to `element` member variable
-        // this should be safe since this is a class
-        let p = withUnsafeMutablePointer(to: &self.element) { $0 }
-        self.hostBuffer = UnsafeMutableBufferPointer(start: p, count: 1)
+    @inlinable public convenience init(single element: Element) {
+        self.init(count: 1)
+        readWrite(at: 0, count: 1)[0] = element
 
         #if DEBUG
-        diagnostic("\(createString) \(name)(\(id)) " +
-            "\(Element.self)[1]", categories: .dataAlloc)
-        #endif
-    }
-
-    //--------------------------------------------------------------------------
-    // init(elements:name:
-    @inlinable
-    public init(copying other: DiscreetStorage) {
-        self.id = other.id
-        self.isReadOnly = other.isReadOnly
-        self.isReference = other.isReference
-        self.name = other.name
-        if isReference {
-            hostBuffer = other.hostBuffer
-        } else {
-            hostBuffer = UnsafeMutableBufferPointer
-                .allocate(capacity: other.hostBuffer.count)
-            _ = hostBuffer.initialize(from: other.hostBuffer)
-        }
-        element = hostBuffer[0]
-    }
-
-    //--------------------------------------------------------------------------
-    // init(buffer:name:
-    @inlinable
-    public init(referenceTo buffer: UnsafeBufferPointer<Element>) {
-        self.hostBuffer = UnsafeMutableBufferPointer(mutating: buffer)
-        self.id = Context.nextBufferId
-        self.isReadOnly = true
-        self.isReference = true
-        self.name = "Tensor"
-        self.element = hostBuffer[0]
-
-        #if DEBUG
-        diagnostic("\(createString) Reference \(name)(\(id)) " +
-            "\(Element.self)[\(hostBuffer.count)]", categories: .dataAlloc)
+        diagnostic("\(createString) \(diagnosticName) " +
+                    "\(Element.self)[1]", categories: .dataAlloc)
         #endif
     }
     
     //--------------------------------------------------------------------------
-    // init(buffer:
-    @inlinable
-    public init(referenceTo buffer: UnsafeMutableBufferPointer<Element>)
-    {
-        self.hostBuffer = buffer
-        self.id = Context.nextBufferId
-        self.isReadOnly = false
-        self.isReference = true
-        self.name = "Tensor"
-        self.element = hostBuffer[0]
-
-        #if DEBUG
-        diagnostic("\(createString) Reference \(name)(\(id)) " +
-            "\(Element.self)[\(hostBuffer.count)]", categories: .dataAlloc)
-        #endif
-    }
-    
-    //--------------------------------------------------------------------------
-    // streaming
-    @inlinable
-    public init<S, Stream>(block shape: S, bufferedBlocks: Int, stream: Stream)
-        where S: TensorShape, Stream: BufferStream
-    {
+    //
+    @inlinable public init(copying other: DiscreetStorage<Element>) {
         fatalError()
     }
     
     //--------------------------------------------------------------------------
-    // deinit
-    @inlinable
-    deinit {
-        if !isReference {
-            hostBuffer.deallocate()
-            #if DEBUG
-            diagnostic("\(releaseString) \(name)(\(id)) ",
-                categories: .dataAlloc)
-            #endif
+    //
+    @inlinable public init(referenceTo buffer: UnsafeBufferPointer<Element>) {
+        fatalError()
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public init(
+        referenceTo buffer: UnsafeMutableBufferPointer<Element>
+    ) {
+        fatalError()
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public init<S, Stream>(
+        block shape: S,
+        bufferedBlocks: Int,
+        stream: Stream
+    ) where S : TensorShape, Stream : BufferStream {
+        fatalError()
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public func element(at offset: Int) -> Element {
+        read(at: offset, count: 1)[0]
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public func setElement(value: Element, at offset: Int) {
+        readWrite(at: offset, count: 1)[0] = value
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public func read(
+        at offset: Int, count: Int
+    ) -> UnsafeBufferPointer<Element> {
+        let queue = Context.cpuQueue(0)
+        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
+        return UnsafeBufferPointer(start: start, count: count)
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public func read(
+        at offset: Int,
+        count: Int,
+        using queue: DeviceQueue
+    ) -> UnsafeBufferPointer<Element> {
+        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
+        return UnsafeBufferPointer(start: start, count: count)
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public func readWrite(
+        at offset: Int,
+        count: Int
+    ) -> UnsafeMutableBufferPointer<Element> {
+        let queue = Context.cpuQueue(0)
+        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
+        return UnsafeMutableBufferPointer(start: start, count: count)
+    }
+    
+    //--------------------------------------------------------------------------
+    //
+    @inlinable public func readWrite(
+        at offset: Int,
+        count: Int,
+        willOverwrite: Bool,
+        using queue: DeviceQueue
+    ) -> UnsafeMutableBufferPointer<Element> {
+        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
+        return UnsafeMutableBufferPointer(start: start, count: count)
+    }
+    
+    //--------------------------------------------------------------------------
+    // getMemory
+    // Manages an array of replicated device memory indexed by the deviceId
+    // assoicated with `stream`. It will lazily create device memory if needed
+    @inlinable public func getMemory(
+        _ queue: DeviceQueue
+    ) -> DeviceMemory<Element> {
+        if let memory = replicas[queue.deviceId] {
+            if memory.version == replicas[master]!.version {
+                return memory
+            } else {
+                // migrate
+                fatalError()
+            }
+        } else {
+            do {
+                // allocate the buffer for the target device
+                // and save in the replica list
+                let memory = try queue.allocate(Element.self, count: count)
+                replicas[queue.deviceId] = memory
+                
+                // the new buffer is now the master version
+                master = queue.deviceId
+                return memory
+            } catch {
+                // Fail for now
+                writeLog("Failed to allocate memory on \(queue.deviceName)")
+                fatalError("TODO: implement LRU host migration" +
+                            " and discreet memory discard")
+            }
         }
     }
-    
-    @inlinable
-    public func element(at offset: Int) -> Element {
-        hostBuffer[offset]
-    }
-    
-    @inlinable
-    public func setElement(value: Element, at offset: Int) {
-        hostBuffer[offset] = value
-    }
-    
-    //--------------------------------------------------------------------------
-    // read
-    @inlinable
-    public func read(at offset: Int, count: Int) -> UnsafeBufferPointer<Element>
-    {
-        let start = hostBuffer.baseAddress!.advanced(by: offset)
-        return UnsafeBufferPointer(start: start, count: count)
-    }
-    
-    //--------------------------------------------------------------------------
-    // read
-    @inlinable
-    public func read(at offset: Int, count: Int, using queue: DeviceQueue)
-        -> UnsafeBufferPointer<Element>
-    {
-        let start = hostBuffer.baseAddress!.advanced(by: offset)
-        return UnsafeBufferPointer(start: start, count: count)
-    }
-    
-    //--------------------------------------------------------------------------
-    // readWrite
-    @inlinable
-    public func readWrite(at offset: Int, count: Int)
-        -> UnsafeMutableBufferPointer<Element>
-    {
-        let start = hostBuffer.baseAddress!.advanced(by: offset)
-        return UnsafeMutableBufferPointer(start: start, count: count)
-    }
-    
-    //--------------------------------------------------------------------------
-    // readWrite
-    @inlinable
-    public func readWrite(at offset: Int, count: Int, willOverwrite: Bool,
-                          using queue: DeviceQueue)
-        -> UnsafeMutableBufferPointer<Element>
-    {
-        let start = hostBuffer.baseAddress!.advanced(by: offset)
-        return UnsafeMutableBufferPointer(start: start, count: count)
-    }
 }
-

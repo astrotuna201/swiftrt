@@ -39,9 +39,11 @@ public protocol DeviceQueue: Logging {
 
     //--------------------------------------------------------------------------
     /// allocate
-    func allocate(byteCount: Int, heapIndex: Int) throws -> DeviceMemory
-    ///
-    func copyAsync(from memory: DeviceMemory, to other: DeviceMemory)
+    func allocate<Element>(
+        _ type: Element.Type,
+        count: Int,
+        heapIndex: Int
+    ) throws -> DeviceMemory<Element>
     ///
     func createEvent(options: QueueEventOptions) -> QueueEvent
     ///
@@ -57,16 +59,14 @@ public protocol DeviceQueue: Logging {
 extension DeviceQueue {
     //--------------------------------------------------------------------------
     // allocate
-    @inlinable public func allocate(
-        byteCount: Int,
-        heapIndex: Int
-    ) throws -> DeviceMemory {
-        // allocate a host memory buffer
-        let buffer = UnsafeMutableRawBufferPointer.allocate(
-                byteCount: byteCount, alignment: MemoryLayout<Double>.alignment)
-        
-        return DeviceMemory(buffer: buffer, memoryType: memoryType,
-                            { buffer.deallocate() })
+    @inlinable public func allocate<Element>(
+        _ type: Element.Type,
+        count: Int,
+        heapIndex: Int = 0
+    ) throws -> DeviceMemory<Element> {
+        // allocate an aligned host memory buffer
+        let buff = UnsafeMutableBufferPointer<Element>.allocate(capacity: count)
+        return DeviceMemory(buff, memoryType, { buff.deallocate() })
     }
     
     //--------------------------------------------------------------------------
@@ -79,6 +79,13 @@ extension DeviceQueue {
         diagnostic("\(createString) QueueEvent(\(event.id)) on " +
                     "\(deviceName)_\(name)", categories: .queueAlloc)
         return event
+    }
+    
+    //--------------------------------------------------------------------------
+    /// deviceName
+    /// returns a diagnostic name for the device assoicated with this queue
+    @inlinable public var deviceName: String {
+        Context.local.platform.devices[deviceId].name
     }
     
     //--------------------------------------------------------------------------
@@ -123,15 +130,4 @@ extension DeviceQueue {
     // the synchronous queue completes work as it is queued,
     // so it is always complete
     @inlinable public func waitUntilQueueIsComplete() { }
-    
-    //--------------------------------------------------------------------------
-    // copyAsync
-    @inlinable public func copyAsync(
-        from memory: DeviceMemory,
-        to other: DeviceMemory
-    ) {
-        assert(memory.memoryType == .unified && other.memoryType == .unified)
-        let buffer = UnsafeRawBufferPointer(memory.buffer)
-        other.buffer.copyMemory(from: buffer)
-    }
 }

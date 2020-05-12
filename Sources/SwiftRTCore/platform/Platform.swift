@@ -192,9 +192,9 @@ public protocol PlatformDevice: class, Logger {
 
 //==============================================================================
 /// DeviceMemory
-public struct DeviceMemory {
+public struct DeviceMemory<Element> {
     /// base address and size of buffer
-    public let buffer: UnsafeMutableRawBufferPointer
+    public let buffer: UnsafeMutableBufferPointer<Element>
     /// function to free the memory
     public let deallocate: () -> Void
     /// specifies the device memory type for data transfer
@@ -202,11 +202,11 @@ public struct DeviceMemory {
     /// version
     public var version: Int
     
-    @inlinable
-    public init(buffer: UnsafeMutableRawBufferPointer,
-                memoryType: MemoryType,
-                _ deallocate: @escaping () -> Void)
-    {
+    @inlinable public init(
+        _ buffer: UnsafeMutableBufferPointer<Element>,
+        _ memoryType: MemoryType,
+        _ deallocate: @escaping () -> Void
+    ) {
         self.buffer = buffer
         self.memoryType = memoryType
         self.version = -1
