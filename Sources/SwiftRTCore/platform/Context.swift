@@ -25,11 +25,11 @@ import Darwin.C
 // Platform types
 #if canImport(CCuda)
 public typealias PlatformType = CudaService
-public typealias StorageBufferType<Element> = ReplicatedBuffer<Element>
+public typealias StorageBufferType = DiscreteStorage
 #else
 public typealias PlatformType = CpuService
-//public typealias StorageBufferType<Element> = DiscreetStorage<Element>
-public typealias StorageBufferType<Element> = CpuStorage<Element>
+//public typealias StorageBufferType = DiscreetStorage
+public typealias StorageBufferType = CpuStorage
 #endif
 
 //==============================================================================
@@ -46,10 +46,14 @@ public final class Context {
     public static var startTime = Date()
     /// the log output object
     public static var logWriter: Log = Log()
-    /// a platform instance unique id for queue events
-    public static var queueEventCounter: Int = 0
+
+    //-------------------------------------
     /// counter for unique buffer ids
     public static var bufferIdCounter: Int = 0
+    /// a platform instance unique id for queue events
+    public static var queueCounter: Int = 0
+    /// a platform instance unique id for queue events
+    public static var queueEventCounter: Int = 0
 
     /// a static instance of the compute platform
     /// The platform type is specified in Types.swift and selected
@@ -69,15 +73,22 @@ public final class Context {
         get { logWriter }
         set { logWriter = newValue }
     }
+
+    /// a counter used to uniquely identify queue events for diagnostics
+    @inlinable static var nextQueueId: Int {
+        defer { queueCounter += 1 }
+        return queueCounter
+    }
+    
     /// a counter used to uniquely identify queue events for diagnostics
     @inlinable static var nextQueueEventId: Int {
-        queueEventCounter += 1
+        defer { queueEventCounter += 1 }
         return queueEventCounter
     }
     
     /// nextBufferId
     @inlinable public static var nextBufferId: Int {
-        bufferIdCounter += 1
+        defer { bufferIdCounter += 1 }
         return bufferIdCounter
     }
 
@@ -85,6 +96,11 @@ public final class Context {
     /// - Returns: the current device queue
     @inlinable public static var currentDevice: PlatformType.Device {
         Context.local.platform.currentDevice
+    }
+
+    /// - Returns: the current device queue
+    @inlinable public static var devices: [PlatformType.Device] {
+        Context.local.platform.devices
     }
 
     /// the currently scoped queue that platform functions will use

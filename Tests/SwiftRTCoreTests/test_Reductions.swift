@@ -46,7 +46,7 @@ class test_Reductions: XCTestCase {
             [3, 4, 5],
             [6, 7, 8]
         ])
-        let ai = array([0, 2], dtype: DeviceIndex.self)
+        let ai = array([0, 2], type: DeviceIndex.self)
         let b = gather(from: a, indices: ai)
         XCTAssert(b == [
             [0, 1, 2],
@@ -93,7 +93,8 @@ class test_Reductions: XCTestCase {
               [ 5,   6]]])
 
         // sum depths
-        XCTAssert(v.sum(alongAxes: 0) == [
+        let s0 = v.sum(alongAxes: 0)
+        XCTAssert(s0 == [
             [
                 [11,  4],
                 [ 6,  8],
@@ -235,6 +236,7 @@ class test_Reductions: XCTestCase {
     //--------------------------------------------------------------------------
     // test_sumTensor2
     func test_sumTensor2() {
+//        Context.log.level = .diagnostic
         let m = array([
             [0, 1],
             [2, 3],
@@ -253,7 +255,7 @@ class test_Reductions: XCTestCase {
             XCTAssert(result.shape == [1, 1])
             XCTAssert(result.element == 15)
         }
-        
+
         // sum cols
         do {
             let result = m.sum(alongAxes: 1)

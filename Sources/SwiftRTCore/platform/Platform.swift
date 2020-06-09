@@ -21,7 +21,7 @@ import Foundation
 /// compute node, such as (cpu, cuda, tpu, ...)
 public protocol Platform: class, Logger {
     // types
-    associatedtype Device: PlatformDevice
+    associatedtype Device: ComputeDevice
 
     /// a collection of available compute devices
     var devices: [Device] { get }
@@ -125,22 +125,6 @@ public enum NanPropagation: Int, Codable {
 }
 
 //==============================================================================
-/// StorageOrder
-/// Specifies how to store multi-dimensional data in row-major (C-style)
-/// or column-major (Fortran-style) order in memory.
-/// These names are following the numpy naming convention
-public enum StorageOrder: Int, Codable {
-    /// dynamic decision based on api
-    case A
-    /// C style row major memory layout
-    case C
-    /// Fortran style column major memory layout
-    case F
-    /// more expressive aliases
-    public static let rowMajor = C, colMajor = F
-}
-
-//==============================================================================
 /// ReductionOp
 public enum ReductionOp: Int, Codable {
     case add
@@ -174,10 +158,10 @@ public enum EvaluationMode {
 }
 
 //==============================================================================
-/// PlatformDevice
+/// ComputeDevice
 /// a compute device represents a physical service device installed
 /// on the platform
-public protocol PlatformDevice: class, Logger {
+public protocol ComputeDevice: class, Logger {
     associatedtype Queue: DeviceQueue
     
     /// the id of the device for example dev:0, dev:1, ...
@@ -192,25 +176,33 @@ public protocol PlatformDevice: class, Logger {
 
 //==============================================================================
 /// DeviceMemory
-public struct DeviceMemory<Element> {
+public final class DeviceMemory {
     /// base address and size of buffer
-    public let buffer: UnsafeMutableBufferPointer<Element>
+    public let buffer: UnsafeMutableRawBufferPointer
     /// function to free the memory
     public let deallocate: () -> Void
+    /// id where memory is located
+    public let deviceId: Int
     /// specifies the device memory type for data transfer
-    public let memoryType: MemoryType
+    public let type: MemoryType
     /// version
     public var version: Int
     
     @inlinable public init(
-        _ buffer: UnsafeMutableBufferPointer<Element>,
-        _ memoryType: MemoryType,
-        _ deallocate: @escaping () -> Void
+        deviceId: Int,
+        buffer: UnsafeMutableRawBufferPointer,
+        type: MemoryType,
+        _ deallocate: @escaping () -> Void = {}
     ) {
+        self.deviceId = deviceId
         self.buffer = buffer
-        self.memoryType = memoryType
-        self.version = -1
+        self.type = type
+        self.version = 0
         self.deallocate = deallocate
+    }
+    
+    @inlinable deinit {
+        deallocate()
     }
 }
 
@@ -220,7 +212,7 @@ public struct DeviceMemory<Element> {
 /// - created by a `DeviceQueue`
 /// - recorded on a queue to create a barrier
 /// - waited on by one or more threads for group synchronization
-public protocol QueueEvent {
+public protocol QueueEvent: class {
     /// the id of the event for diagnostics
     var id: Int { get }
     /// is `true` if the even has occurred, used for polling
@@ -230,9 +222,13 @@ public protocol QueueEvent {
 
     /// measure elapsed time since another event
     func elapsedTime(since other: QueueEvent) -> TimeInterval?
+    
+    /// signals that the event has occurred
+    func signal()
+    
     /// will block the caller until the timeout has elapsed if one
     /// was specified during init, otherwise it will block forever
-    func wait() throws
+    func wait()
 }
 
 //==============================================================================
@@ -268,7 +264,18 @@ public enum QueueEventError: Error {
 //==============================================================================
 /// MemoryType
 public enum MemoryType {
-    case unified, discreet
+    /// the memory is unified with the cpu address space
+    case unified
+    /// the memory is in a discreet memory address space on another device
+    /// and is not directly accessible by the cpu
+    case discreet
+}
+
+public enum DeviceQueueMode {
+    /// the device queue schedule work asynchronously
+    case async
+    /// the device queue will execute work immediately before returning
+    case sync
 }
 
 //==============================================================================
@@ -293,111 +300,10 @@ public let _messageQueueThreadViolation =
 //==============================================================================
 /// DeviceError
 public enum DeviceError : Error {
+    case allocationFailed
     case initializeFailed
     case queueError(idPath: [Int], message: String)
     case timeout(idPath: [Int], message: String)
-}
-
-//==============================================================================
-/// TensorType protocol
-/// an n-dimensional collection of elements
-/// Currently there is only one tensor type, so these protocols are not
-/// needed. They are kept in place for future experimentation.
-///
-public protocol TensorType: Collection, CustomStringConvertible, Logging
-    where Index == ElementIndex<Shape>
-{
-    /// the ranked short vector type that defines the collection's dimensions
-    associatedtype Shape: TensorShape
-    /// the type of element in the collection
-    associatedtype Element
-
-    //----------------------------------
-    /// the number of elements described by `shape`
-    var count: Int { get }
-    /// `true` if the tensor represents a single constant Element
-    var isSingleElement: Bool { get }
-    /// the dimensions of the collection
-    var shape: Shape { get }
-    /// the order in memory to store materialized Elements. Generator
-    /// tensor types maintain this property as a template for dense
-    /// result tensors.
-    var storageOrder: StorageOrder { get }
-
-    //----------------------------------
-    /// makeIndex(position:
-    /// makes an index from a logical position within `shape`
-    /// - Parameters:
-    ///  - position: the n-dimensional coordinate position within `shape`
-    /// - Returns: the index
-    func makeIndex(at position: Shape) -> Index
-
-    /// subscript
-    /// - Parameters:
-    ///  - lower: the lower bound of the slice
-    ///  - upper: the upper bound of the slice
-    /// - Returns: the collection slice
-    subscript(lower: Shape, upper: Shape) -> Self { get }
-
-    //----------------------------------
-    /// `read`
-    /// Synchronizes a collection of materialized elements for reading.
-    /// This function blocks until the elements are available.
-    /// `Elements` are accessed by the application using `Collection`
-    /// enumeration via `indices` or subscripting.
-    func read()
-    
-    /// `read(queue:
-    /// Synchronizes a collection of materialized elements for reading
-    /// using the specified `queue`. This function is non blocking, and
-    /// the elements will be available when the request reaches the
-    /// head of the queue.
-    ///
-    /// - Parameter queue: the device queue to use for synchronization
-    func read(using queue: DeviceQueue)
-}
-
-//==============================================================================
-/// MutableTensorType
-/// an n-dimensional mutable collection of stored elements
-public protocol MutableTensorType: TensorType, MutableCollection
-{
-    /// `true` if the collection can be shared by multiple writers
-    /// without performing copy-on-write
-    var isShared: Bool { get }
-    
-    //----------------------------------
-    /// `shared`
-    /// returns a copy of `self` that does not perform copy-on-write to enable
-    /// multi-threaded writes. If the associated storage is not uniquely
-    /// referenced, then a copy will be made before returning the sharable
-    /// copy. Subscripted views inherit the `isShared` property
-    /// - Returns: a sharable copy of `self`
-    mutating func shared() -> Self
-
-    /// subscript
-    /// - Parameters:
-    ///  - lower: the lower bound of the slice
-    ///  - upper: the upper bound of the slice
-    /// - Returns: the collection slice
-    subscript(lower: Shape, upper: Shape) -> Self { get set }
-    
-    //----------------------------------
-    /// `readWrite`
-    /// Synchronizes a collection of materialized elements for read write.
-    /// This function blocks until the elements are available.
-    /// `Elements` are accessed by the application using `MutableCollection`
-    /// enumeration via `indices` or subscripting.
-    mutating func readWrite()
-
-    /// `readWrite(queue:`
-    /// Synchronizes a mutable collection of materialized elements
-    /// using the specified `queue`. This function is non blocking, and
-    /// the elements will be available when the request reaches the
-    /// head of the queue.
-    ///
-    /// - Parameter queue: the device queue to use for synchronization
-    mutating func readWrite(using queue: DeviceQueue)
 }
 
 //==============================================================================
@@ -412,7 +318,7 @@ public enum ScalarType: Int {
     case bool
 }
 
-public protocol ScalarElement {
+public protocol ScalarElement: StorageElement {
     static var type: ScalarType { get }
     static var zeroPointer: UnsafeRawPointer { get }
     static var onePointer: UnsafeRawPointer { get }

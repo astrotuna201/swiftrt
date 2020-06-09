@@ -16,10 +16,14 @@
 import Foundation
 
 //==============================================================================
+/// CpuFunctions
+public protocol CpuFunctions { }
+
+//==============================================================================
 /// CpuQueue
 /// a final version of the default device queue which executes functions
 /// synchronously on the cpu
-public final class CpuQueue: DeviceQueue, CpuFunctions, CpuMapOps {
+public final class CpuQueue: DeviceQueue, CpuFunctions {
     // properties
     public let creatorThread: Thread
     public var defaultQueueEventOptions: QueueEventOptions
@@ -28,16 +32,21 @@ public final class CpuQueue: DeviceQueue, CpuFunctions, CpuMapOps {
     public let id: Int
     public let logInfo: LogInfo
     public let memoryType: MemoryType
+    public let mode: DeviceQueueMode
     public let name: String
+    public let queue: DispatchQueue
+    public let usesCpu: Bool
     
     //--------------------------------------------------------------------------
     // initializers
-    @inlinable
-    public init(id: Int, parent logInfo: LogInfo,
-                deviceId: Int, deviceName: String,
-                memoryType: MemoryType)
-    {
-        self.id = id
+    @inlinable public init(
+        parent logInfo: LogInfo,
+        deviceId: Int,
+        deviceName: String,
+        memoryType: MemoryType,
+        mode: DeviceQueueMode
+    ) {
+        self.id = Context.nextQueueId
         self.name = "q\(id)"
         self.logInfo = logInfo.flat(name)
         self.deviceId = deviceId
@@ -45,13 +54,18 @@ public final class CpuQueue: DeviceQueue, CpuFunctions, CpuMapOps {
         self.creatorThread = Thread.current
         self.defaultQueueEventOptions = QueueEventOptions()
         self.memoryType = memoryType
+        self.mode = mode
+        self.queue = DispatchQueue(label: "\(deviceName)_\(name)")
+        self.usesCpu = true
         
-        diagnostic("\(createString) \(Self.self): \(deviceName)_\(name)",
+        diagnostic("\(createString) queue: \(deviceName)_\(name)",
+                   categories: .queueAlloc)
+    }
+    
+    deinit {
+        // make sure all scheduled work is complete before exiting
+        waitUntilQueueIsComplete()
+        diagnostic("\(releaseString) queue: \(deviceName)_\(name)",
                    categories: .queueAlloc)
     }
 }
-
-//==============================================================================
-/// CpuFunctions
-public protocol CpuFunctions { }
-

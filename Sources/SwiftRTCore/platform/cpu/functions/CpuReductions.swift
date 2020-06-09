@@ -14,54 +14,119 @@
 // limitations under the License.
 //
 import Foundation
+import Numerics
 
 //==============================================================================
 // DeviceQueue functions with default cpu delegation
-extension DeviceQueue where Self: CpuFunctions & CpuMapOps
+extension DeviceQueue where Self: CpuFunctions
 {
     //--------------------------------------------------------------------------
-    @inlinable public func reduceSumAll<S,E>(_ x: Tensor<S,E>,
-                                             _ result: inout Tensor<S,E>)
-    where E: AdditiveArithmetic { cpu_reduceSumAll(x, &result) }
+    @inlinable public func reduceAll<S>(
+        _ x: Tensor<S,Bool>,
+        _ result: inout Tensor<S,Bool>
+    ) { cpu_reduceAll(x, &result) }
+    //--------------------------------------------------------------------------
+    @inlinable public func reduceAny<S>(
+        _ x: Tensor<S,Bool>,
+        _ result: inout Tensor<S,Bool>
+    ) { cpu_reduceAny(x, &result) }
+    //--------------------------------------------------------------------------
+    @inlinable public func reduceSum<S,E>(
+        _ x: Tensor<S,E>,
+        _ result: inout Tensor<S,E>
+    ) where E.Value: AdditiveArithmetic { cpu_reduceSum(x, &result) }
+    //--------------------------------------------------------------------------
+    @inlinable public func reduceMean<S,E>(
+        _ x: Tensor<S,E>,
+        _ result: inout Tensor<S,E>
+    ) where E.Value: AlgebraicField { cpu_reduceMean(x, &result) }
+    //--------------------------------------------------------------------------
+    @inlinable public func reduceMin<S,E>(
+        _ x: Tensor<S,E>,
+        _ result: inout Tensor<S,E>
+    ) where E.Value: Comparable { cpu_reduceMin(x, &result) }
+    //--------------------------------------------------------------------------
+    @inlinable public func reduceMax<S,E>(
+        _ x: Tensor<S,E>,
+        _ result: inout Tensor<S,E>
+    ) where E.Value: Comparable { cpu_reduceMax(x, &result) }
     //--------------------------------------------------------------------------
     @inlinable func reduce<S,E>(
         _ x: Tensor<S,E>,
         _ result: inout Tensor<S,E>,
         _ opId: ReductionOp,
-        _ opNext: @escaping (E, E) -> E,
+        _ opNext: @escaping (E.Value, E.Value) -> E.Value,
         _ opFinal: ReduceOpFinal<Tensor<S,E>>?
     ) { cpu_reduce(x, &result, opId, opNext, opFinal) }
 }
 
 //==============================================================================
 // Cpu device queue function implementations
-extension CpuFunctions where Self: CpuMapOps {
+extension CpuFunctions where Self: DeviceQueue {
     //--------------------------------------------------------------------------
-    @inlinable public func cpu_reduceSumAll<S,E>(
-        _ x: Tensor<S,E>,
-        _ result: inout Tensor<S,E>
-    ) where E: AdditiveArithmetic {
-        result[result.startIndex] = x.indices.reduce(into: E.zero) { $0 += x[$1] }
+    @inlinable public func cpu_reduceAll<S>(
+        _ x: Tensor<S,Bool>,
+        _ r: inout Tensor<S,Bool>
+    ) {
+        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) { $0 = $0 && $1 }
     }
-    
+    //--------------------------------------------------------------------------
+    @inlinable public func cpu_reduceAny<S>(
+        _ x: Tensor<S,Bool>,
+        _ r: inout Tensor<S,Bool>
+    ) {
+        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) { $0 = $0 || $1 }
+    }
+    //--------------------------------------------------------------------------
+    @inlinable public func cpu_reduceSum<S,E>(
+        _ x: Tensor<S,E>,
+        _ r: inout Tensor<S,E>
+    ) where E.Value: AdditiveArithmetic {
+        r[r.startIndex] = x.buffer.reduce(into: E.Value.zero) { $0 += $1 }
+    }
+    //--------------------------------------------------------------------------
+    @inlinable public func cpu_reduceMean<S,E>(
+        _ x: Tensor<S,E>,
+        _ r: inout Tensor<S,E>
+    ) where E.Value: AlgebraicField {
+        let sum = x.buffer.reduce(into: E.Value.zero) { $0 += $1 }
+        r[r.startIndex] = sum / E.Value(exactly: x.count)!
+    }
+    //--------------------------------------------------------------------------
+    @inlinable public func cpu_reduceMin<S,E>(
+        _ x: Tensor<S,E>,
+        _ r: inout Tensor<S,E>
+    ) where E.Value: Comparable {
+        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) {
+            // TODO: report this
+            // this is 2X faster than: $0 = $0 <= $1 ? $0 : $1
+            $0 = Swift.min($0, $1)
+        }
+    }
+    //--------------------------------------------------------------------------
+    @inlinable public func cpu_reduceMax<S,E>(
+        _ x: Tensor<S,E>,
+        _ r: inout Tensor<S,E>
+    ) where E.Value: Comparable {
+        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) {
+            // TODO: report this
+            // this is 2X faster than: $0 = Swift.max($0, $1)
+            $0 = $0 > $1 ? $0 : $1
+        }
+    }
+
     //--------------------------------------------------------------------------
     @inlinable func cpu_reduce<S,E>(
         _ x: Tensor<S,E>,
         _ result: inout Tensor<S,E>,
         _ opId: ReductionOp,
-        _ opNext: @escaping (E, E) -> E,
+        _ opNext: @escaping (E.Value, E.Value) -> E.Value,
         _ opFinal: ReduceOpFinal<Tensor<S,E>>?
     ) {
-        // repeat result to match `x`
-        // this is unusual because we intentionally are writing to
-        // repeated storage for result accumulation
-        var repeatedResult = Tensor<S,E>(repeating: result, to: x.shape)
-        
-        // do the reductions
-        reductionOp(x, &repeatedResult, opNext)
+        mapOp(x, &result, opNext)
         
         if let op = opFinal {
-            inPlaceOp(&result, op)
+            mapOp(&result, op)
         }
     }
 }

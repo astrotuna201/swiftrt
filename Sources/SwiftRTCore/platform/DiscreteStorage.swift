@@ -16,43 +16,45 @@
 import Foundation
 
 //==============================================================================
-/// DiscreetStorage
-public final class DiscreetStorage<Element>: StorageBuffer
-{
-    /// the number of storage elements
-    public let count: Int
-    /// unique storage id used in diagnostic messages
+/// DiscreteStorage
+public final class DiscreteStorage: StorageBuffer {
+    // StorageBuffer protocol properties
+    public let alignment: Int
+    public let byteCount: Int
     public let id: Int
-    /// `true` if the storage is read only
-    public let isReadOnly: Bool
-    /// `true` if the storage is a reference to externally
-    /// managed memory
-    public let isReference: Bool
-    /// the index of the last memory buffer written to
-    public var master: Int
-    /// the name of the storage used in diagnostic messages
+    public var isReadOnly: Bool
+    public var isReference: Bool
     public var name: String
-    /// replicated device memory buffers
-    public var replicas: [DeviceMemory<Element>?]
-
-    /// the host transfer buffer
-    @inlinable public var hostBuffer: UnsafeMutableBufferPointer<Element> {
-        assert(master == 0, "`read` or `readWrite` on device 0" +
-               " must be called prior to access")
-        return replicas[0]!.buffer
-    }
 
     //--------------------------------------------------------------------------
-    // init(count:
-    @inlinable public init(count: Int) {
-        self.count = count
+    // implementation properties
+    
+    /// the last queue used to mutate the storage
+    public var lastMutatingQueueId: Int
+    /// the index of the last memory buffer written to
+    public var master: Int
+    /// replicated device memory buffers
+    public var replicas: [DeviceMemory?]
+
+    //--------------------------------------------------------------------------
+    // init(type:count:layout:name:
+    @inlinable public init<Element>(
+        storedType: Element.Type,
+        count: Int,
+        name: String = "Tensor"
+    ) {
+        self.name = name
+        alignment = MemoryLayout<Element>.alignment
+        byteCount = MemoryLayout<Element>.size * count
         id = Context.nextBufferId
         isReadOnly = false
         isReference = false
+
+        // setup replica managment
         master = -1
-        name = "Tensor"
-        let deviceCount = Context.local.platform.devices.count
-        replicas = [DeviceMemory<Element>?](repeating: nil, count: deviceCount)
+        lastMutatingQueueId = 0
+        let numDevices = Context.local.platform.devices.count
+        replicas = [DeviceMemory?](repeating: nil, count: numDevices)
 
         #if DEBUG
         diagnostic("\(createString) \(diagnosticName) " +
@@ -61,35 +63,53 @@ public final class DiscreetStorage<Element>: StorageBuffer
     }
     
     //--------------------------------------------------------------------------
-    // init(element:
-    @inlinable public convenience init(single element: Element) {
-        self.init(count: 1)
-        readWrite(at: 0, count: 1)[0] = element
-
-        #if DEBUG
-        diagnostic("\(createString) \(diagnosticName) " +
-                    "\(Element.self)[1]", categories: .dataAlloc)
-        #endif
-    }
-    
-    //--------------------------------------------------------------------------
-    //
-    @inlinable public init(copying other: DiscreetStorage<Element>) {
-        fatalError()
-    }
-    
-    //--------------------------------------------------------------------------
-    //
-    @inlinable public init(referenceTo buffer: UnsafeBufferPointer<Element>) {
-        fatalError()
-    }
-    
-    //--------------------------------------------------------------------------
-    //
+    // init(copying other:
     @inlinable public init(
+        copying other: DiscreteStorage,
+        using queue: DeviceQueue
+    ) {
+        id = Context.nextBufferId
+        alignment = other.alignment
+        byteCount = other.byteCount
+        isReadOnly = other.isReadOnly
+        isReference = other.isReference
+        name = other.name
+
+        // setup replica managment
+        master = -1
+        lastMutatingQueueId = 0
+        let numDevices = Context.local.platform.devices.count
+        replicas = [DeviceMemory?](repeating: nil, count: numDevices)
+
+        // copy other master to self using the current queue
+        
+        
+    }
+    
+    //--------------------------------------------------------------------------
+    // init(buffer:layout:
+    @inlinable public convenience init<Element>(
+        referenceTo buffer: UnsafeBufferPointer<Element>
+    ) {
+        self.init(storedType: Element.self, count: buffer.count,
+                  name: "Reference Tensor")
+        isReadOnly = true
+        isReference = true
+        let p = UnsafeMutableBufferPointer(mutating: buffer)
+        let raw = UnsafeMutableRawBufferPointer(p)
+        replicas[0] = DeviceMemory(deviceId: 0, buffer: raw, type: .unified)
+    }
+    
+    //--------------------------------------------------------------------------
+    // init(type:buffer:layout:
+    @inlinable public convenience init<Element>(
         referenceTo buffer: UnsafeMutableBufferPointer<Element>
     ) {
-        fatalError()
+        self.init(storedType: Element.self, count: buffer.count,
+                  name: "Reference Tensor")
+        isReference = true
+        let raw = UnsafeMutableRawBufferPointer(buffer)
+        replicas[0] = DeviceMemory(deviceId: 0, buffer: raw, type: .unified)
     }
     
     //--------------------------------------------------------------------------
@@ -104,57 +124,30 @@ public final class DiscreetStorage<Element>: StorageBuffer
     
     //--------------------------------------------------------------------------
     //
-    @inlinable public func element(at offset: Int) -> Element {
-        read(at: offset, count: 1)[0]
-    }
-    
-    //--------------------------------------------------------------------------
-    //
-    @inlinable public func setElement(value: Element, at offset: Int) {
-        readWrite(at: offset, count: 1)[0] = value
-    }
-    
-    //--------------------------------------------------------------------------
-    //
-    @inlinable public func read(
-        at offset: Int, count: Int
-    ) -> UnsafeBufferPointer<Element> {
-        let queue = Context.cpuQueue(0)
-        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
+    @inlinable public func read<Element>(
+        type: Element.Type,
+        at index: Int,
+        count: Int,
+        using queue: DeviceQueue
+    ) -> UnsafeBufferPointer<Element>
+    {
+        let start = getMemory(queue).buffer.baseAddress!
+                .bindMemory(to: Element.self, capacity: count)
+                .advanced(by: index)
         return UnsafeBufferPointer(start: start, count: count)
     }
     
     //--------------------------------------------------------------------------
     //
-    @inlinable public func read(
-        at offset: Int,
+    @inlinable public func readWrite<Element>(
+        type: Element.Type,
+        at index: Int,
         count: Int,
         using queue: DeviceQueue
-    ) -> UnsafeBufferPointer<Element> {
-        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
-        return UnsafeBufferPointer(start: start, count: count)
-    }
-    
-    //--------------------------------------------------------------------------
-    //
-    @inlinable public func readWrite(
-        at offset: Int,
-        count: Int
     ) -> UnsafeMutableBufferPointer<Element> {
-        let queue = Context.cpuQueue(0)
-        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
-        return UnsafeMutableBufferPointer(start: start, count: count)
-    }
-    
-    //--------------------------------------------------------------------------
-    //
-    @inlinable public func readWrite(
-        at offset: Int,
-        count: Int,
-        willOverwrite: Bool,
-        using queue: DeviceQueue
-    ) -> UnsafeMutableBufferPointer<Element> {
-        let start = getMemory(queue).buffer.baseAddress!.advanced(by: offset)
+        let start = getMemory(queue).buffer.baseAddress!
+                .bindMemory(to: Element.self, capacity: count)
+                .advanced(by: index)
         return UnsafeMutableBufferPointer(start: start, count: count)
     }
     
@@ -162,9 +155,7 @@ public final class DiscreetStorage<Element>: StorageBuffer
     // getMemory
     // Manages an array of replicated device memory indexed by the deviceId
     // assoicated with `stream`. It will lazily create device memory if needed
-    @inlinable public func getMemory(
-        _ queue: DeviceQueue
-    ) -> DeviceMemory<Element> {
+    @inlinable public func getMemory(_ queue: DeviceQueue) -> DeviceMemory {
         if let memory = replicas[queue.deviceId] {
             if memory.version == replicas[master]!.version {
                 return memory
@@ -176,7 +167,9 @@ public final class DiscreetStorage<Element>: StorageBuffer
             do {
                 // allocate the buffer for the target device
                 // and save in the replica list
-                let memory = try queue.allocate(Element.self, count: count)
+                let memory = try queue.allocate(alignment: alignment,
+                                                byteCount: byteCount,
+                                                heapIndex: 0)
                 replicas[queue.deviceId] = memory
                 
                 // the new buffer is now the master version

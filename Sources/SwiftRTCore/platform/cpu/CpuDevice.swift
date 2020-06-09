@@ -17,7 +17,7 @@ import Foundation
 
 //==============================================================================
 /// CpuDevice
-public final class CpuDevice: PlatformDevice {
+public final class CpuDevice: ComputeDevice {
     // properties
     public let id: Int
     public let logInfo: LogInfo
@@ -28,17 +28,18 @@ public final class CpuDevice: PlatformDevice {
     @inlinable public init(
         parent logInfo: LogInfo,
         memoryType: MemoryType,
-        id: Int
+        id: Int,
+        queueMode: DeviceQueueMode
     ) {
         self.id = id
         self.name = "cpu:\(id)"
         self.logInfo = logInfo.flat(name)
         self.memoryType = memoryType
-        self.queues = [CpuQueue(id: 0,
-                                parent: self.logInfo,
+        self.queues = [CpuQueue(parent: self.logInfo,
                                 deviceId: id,
                                 deviceName: name,
-                                memoryType: memoryType)]
+                                memoryType: memoryType,
+                                mode: queueMode)]
     }
 }
 
