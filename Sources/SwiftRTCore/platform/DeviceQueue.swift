@@ -48,16 +48,10 @@ public protocol DeviceQueue: Logging {
     /// allocates a block of memory on the associated device. If there is
     /// insufficient storage, a `DeviceError` will be thrown.
     /// - Parameters:
-    ///  - alignment: the buffer memory alignment
-    ///    correct storage byte size and alignment
     ///  - byteCount: the number of bytes to allocate
     ///  - heapIndex: reserved for future use. Should be 0 for now.
     /// - Returns: a device memory object
-    func allocate(
-        alignment: Int,
-        byteCount: Int,
-        heapIndex: Int
-    ) throws -> DeviceMemory
+    func allocate(byteCount: Int, heapIndex: Int) throws -> DeviceMemory
     
     //--------------------------------------------------------------------------
     /// copy(src:dst:
@@ -65,7 +59,7 @@ public protocol DeviceQueue: Logging {
     /// - Parameters:
     ///  - src: the source buffer
     ///  - dst: the destination buffer
-    func copy(from src: DeviceMemory, to dst: DeviceMemory)
+    func copyAsync(from src: DeviceMemory, to dst: DeviceMemory) throws
     
     /// createEvent(options:
     /// creates a queue event used for synchronization and timing measurements
@@ -99,20 +93,19 @@ extension DeviceQueue {
     //--------------------------------------------------------------------------
     // allocate
     @inlinable public func allocate(
-        alignment: Int,
         byteCount: Int,
         heapIndex: Int = 0
     ) throws -> DeviceMemory {
-        // allocate an aligned host memory buffer
+        // allocate a host memory buffer suitably aligned for any type
         let buffer = UnsafeMutableRawBufferPointer
-                .allocate(byteCount: byteCount, alignment: alignment)
-        return DeviceMemory(deviceId: 0, buffer: buffer, type: memoryType,
-                            { buffer.deallocate() })
+                .allocate(byteCount: byteCount,
+                          alignment: MemoryLayout<Int>.alignment)
+        return CpuDeviceMemory(deviceId, deviceName, buffer: buffer)
     }
     
     //--------------------------------------------------------------------------
-    // copy
-    public func copy(from src: DeviceMemory, to dst: DeviceMemory) {
+    /// copyAsync
+    public func copyAsync(from src: DeviceMemory, to dst: DeviceMemory) throws {
         dst.buffer.copyMemory(from: UnsafeRawBufferPointer(src.buffer))
     }
     
@@ -126,6 +119,10 @@ extension DeviceQueue {
         diagnostic("\(createString) QueueEvent(\(event.id)) on " +
                     "\(deviceName)_\(name)", categories: .queueAlloc)
         return event
+    }
+
+    @inlinable public func createEvent() -> QueueEvent {
+        createEvent(options: defaultQueueEventOptions)
     }
     
     //--------------------------------------------------------------------------

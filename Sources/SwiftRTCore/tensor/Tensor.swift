@@ -145,7 +145,7 @@ public enum Layout: Int, Codable {
     
     public static let C = row, F = col, A = -1
     
-    public static var defaultValue = Layout.row
+    public static var defaultValue: Layout = Layout.row
 }
 
 public let _messageLayoutsMustMatch = "input layouts must match"
@@ -176,11 +176,8 @@ public protocol DifferentiableElement:
 extension Float: DifferentiableElement {}
 extension Double: DifferentiableElement {}
 
-// this is defined with the typealias because of AD same file
-// compiler requirements. Hopefully fixed in the future
-extension Complex: DifferentiableElement {
-  public typealias TangentVector = Self
-}
+extension Complex: DifferentiableElement
+where RealType: Differentiable, RealType.TangentVector == RealType {}
 
 // Differentiable conformance
 extension Tensor: Differentiable & DifferentiableTensor
@@ -225,7 +222,7 @@ extension Tensor: Codable where Element: Codable {
         let shape = try container.decode(Shape.self, forKey: .shape)
         let layout = try container.decode(Layout.self, forKey: .layout)
         var dataContainer = try container.nestedUnkeyedContainer(forKey: .data)
-        self = Self(shape, layout: layout)
+        self = Self(shape: shape, layout: layout)
         self.name = name
 
         assert(self.count == dataContainer.count)
@@ -489,6 +486,18 @@ public extension Tensor {
     }
 
     //--------------------------------------------------------------------------
+    /// `deviceRead(queue:
+    /// Synchronizes the collection of elements for reading
+    /// using the specified `queue`. This function is non blocking, and
+    /// the elements will be available when the request reaches the
+    /// head of the queue.
+    ///
+    /// - Parameter queue: the device queue to use for synchronization
+    @inlinable func deviceRead(using queue: DeviceQueue) -> UnsafeRawPointer {
+        UnsafeRawPointer(read(using: queue).baseAddress!)
+    }
+    
+    //--------------------------------------------------------------------------
     /// `readWrite`
     /// Synchronizes the collection of elements with the caller for read write
     /// This function blocks until the elements are available.
@@ -524,6 +533,20 @@ public extension Tensor {
         
         return storage.readWrite(type: TensorElement.Stored.self, at: i,
                                  count: storedCount, using: queue)
+    }
+    
+    //--------------------------------------------------------------------------
+    /// `deviceReadWrite(queue:`
+    /// Synchronizes the collection of elements with the caller for read write
+    /// using the specified `queue`. This function is non blocking, and
+    /// the elements will be available when the request reaches the
+    /// head of the queue.
+    ///
+    /// - Parameter queue: the device queue to use for synchronization
+    @inlinable mutating func deviceReadWrite(
+        using queue: DeviceQueue
+    ) -> UnsafeMutableRawPointer {
+        UnsafeMutableRawPointer(readWrite(using: queue).baseAddress!)
     }
 }
 

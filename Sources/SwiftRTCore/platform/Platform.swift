@@ -23,6 +23,8 @@ public protocol Platform: class, Logger {
     // types
     associatedtype Device: ComputeDevice
 
+    /// specifies how to schedule work on the cpu
+    static var defaultCpuQueueMode: DeviceQueueMode { get }
     /// a collection of available compute devices
     var devices: [Device] { get }
     /// name used for logging
@@ -115,7 +117,7 @@ public extension Platform {
 }
 
 //==============================================================================
-/// the type used for memory indexing on discreet devices
+/// the type used for memory indexing on discrete devices
 public typealias DeviceIndex = Int32
 
 //==============================================================================
@@ -176,34 +178,19 @@ public protocol ComputeDevice: class, Logger {
 
 //==============================================================================
 /// DeviceMemory
-public final class DeviceMemory {
+public protocol DeviceMemory: class {
     /// base address and size of buffer
-    public let buffer: UnsafeMutableRawBufferPointer
-    /// function to free the memory
-    public let deallocate: () -> Void
-    /// id where memory is located
-    public let deviceId: Int
+    var buffer: UnsafeMutableRawBufferPointer { get }
+    /// device where memory is located
+    var deviceId: Int { get }
+    /// device where memory is located
+    var deviceName: String { get }
+    /// mutable raw pointer to memory buffer to simplify driver calls
+    var pointer: UnsafeMutableRawPointer { get }
     /// specifies the device memory type for data transfer
-    public let type: MemoryType
+    var type: MemoryType { get }
     /// version
-    public var version: Int
-    
-    @inlinable public init(
-        deviceId: Int,
-        buffer: UnsafeMutableRawBufferPointer,
-        type: MemoryType,
-        _ deallocate: @escaping () -> Void = {}
-    ) {
-        self.deviceId = deviceId
-        self.buffer = buffer
-        self.type = type
-        self.version = 0
-        self.deallocate = deallocate
-    }
-    
-    @inlinable deinit {
-        deallocate()
-    }
+    var version: Int { get set }
 }
 
 //==============================================================================
@@ -266,9 +253,9 @@ public enum QueueEventError: Error {
 public enum MemoryType {
     /// the memory is unified with the cpu address space
     case unified
-    /// the memory is in a discreet memory address space on another device
+    /// the memory is in a discrete memory address space on another device
     /// and is not directly accessible by the cpu
-    case discreet
+    case discrete
 }
 
 public enum DeviceQueueMode {
@@ -322,6 +309,30 @@ public protocol ScalarElement: StorageElement {
     static var type: ScalarType { get }
     static var zeroPointer: UnsafeRawPointer { get }
     static var onePointer: UnsafeRawPointer { get }
+}
+
+extension Int8: ScalarElement {
+    @inlinable public static var type: ScalarType { .real8I }
+    
+    public static var zero: Self = 0
+    @inlinable public
+    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
+    
+    public static var one: Self = 1
+    @inlinable public
+    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
+}
+
+extension UInt8: ScalarElement {
+    @inlinable public static var type: ScalarType { .real8U }
+    
+    public static var zero: Self = 0
+    @inlinable public
+    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
+    
+    public static var one: Self = 1
+    @inlinable public
+    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
 }
 
 extension Float: ScalarElement {

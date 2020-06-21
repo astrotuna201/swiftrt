@@ -20,35 +20,63 @@ import Numerics
 
 //==============================================================================
 /// CudaQueue
-public final class CudaQueue: DeviceQueue {
+public final class CudaQueue: DeviceQueue, CpuFunctions {
+    public let creatorThread: Thread
+    public var defaultQueueEventOptions: QueueEventOptions
+    public let deviceId: Int
+    public let deviceName: String
+    public let id: Int
+    public let logInfo: LogInfo
+    public let memoryType: MemoryType
+    public let mode: DeviceQueueMode
+    public let name: String
+    public let queue: DispatchQueue
     public let useGpu: Bool
     
     public let stream: cudaStream_t
     public let cudnn: CudnnHandle
     public let cublas: CublasHandle
+    @inlinable public var usesCpu: Bool { !useGpu }
 
     //--------------------------------------------------------------------------
     // initializers
-    @inlinable
-    public init(id: Int, parent logInfo: LogInfo,
-                deviceId: Int, deviceName: String, useGpu: Bool) throws
-    {
-        self.useGpu = useGpu
-        
-        // select the specified device
-        try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
-        
-        // create a queue associated with the device
-        let flags = UInt32(cudaStreamNonBlocking)
-        var cudaStream: cudaStream_t?
-        try cudaCheck(status: cudaStreamCreateWithFlags(&cudaStream, flags))
-        stream = cudaStream!
-        cudnn = try CudnnHandle(deviceId: deviceId, using: stream)
-        cublas = try CublasHandle(deviceId: deviceId, using: stream)
+    @inlinable public init(
+        parent logInfo: LogInfo,
+        gpuDeviceId: Int,
+        deviceName: String,
+        cpuQueueMode: DeviceQueueMode,
+        useGpu: Bool
+    ) {
+        do {
+            self.id = Context.nextQueueId
+            self.name = "q\(id)"
+            self.logInfo = logInfo.flat(name)
+            self.deviceId = gpuDeviceId
+            self.deviceName = deviceName
+            self.creatorThread = Thread.current
+            self.defaultQueueEventOptions = QueueEventOptions()
+            self.memoryType = useGpu ? .discrete : .unified
+            self.mode = cpuQueueMode
+            self.queue = DispatchQueue(label: "\(deviceName)_\(name)")
+            self.useGpu = useGpu
+            
+            // select the specified device
+            try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
+            
+            // create a queue associated with the device
+            let flags = UInt32(cudaStreamNonBlocking)
+            var cudaStream: cudaStream_t?
+            try cudaCheck(status: cudaStreamCreateWithFlags(&cudaStream, flags))
+            stream = cudaStream!
+            cudnn = CudnnHandle(deviceId: deviceId, using: stream)
+            cublas = CublasHandle(deviceId: deviceId, using: stream)
+        } catch {
+            Context.currentDevice.writeLog("\(error)")
+            fatalError()
+        }
 
-        super.init(id: id, parent: logInfo, deviceId: deviceId,
-                   deviceName: deviceName,
-                   memoryType: useGpu ? .discreet : .unified)
+        diagnostic("\(createString) queue: \(deviceName)_\(name)",
+            categories: .queueAlloc)
     }
     
     //--------------------------------------------------------------------------
@@ -70,28 +98,4 @@ public final class CudaQueue: DeviceQueue {
 //        return try CudaActivationInferring(x: x, y: &y, mode: mode,
 //                                           nan: nan, reluCeiling: reluCeiling)
 //    }
-
-    //==========================================================================
-    // convolution
-    public override func convolution<T, F>(
-        activation: ActivationType,
-        strides: T.Bounds,
-        padding: Padding,
-        dilations: T.Bounds,
-        properties: ConvolutionProperties,
-        device: ServiceDevice,
-        filterBiasBackpropQueueIndex: Int) throws -> CudaConvolution<T, F>
-        where
-        T: DifferentiableTensorView, T.Element: ScalarElement,
-        F: TensorView, F.Bounds == T.Bounds, F.Element: ScalarElement
-    {
-        try CudaConvolution(
-            activation: activation,
-            strides: strides,
-            padding: padding,
-            dilations: dilations,
-            properties: properties,
-            device: device,
-            filterBiasBackpropQueueIndex: filterBiasBackpropQueueIndex)
-    }
 }
