@@ -67,20 +67,19 @@ public protocol _Logging {
 public extension _Logging {
     //--------------------------------------------------------------------------
     /// writeLog
-    @inlinable
-    func willLog(level: LogLevel) -> Bool {
+    @inlinable func willLog(level: LogLevel) -> Bool {
         level <= logWriter.level || level <= logLevel
     }
     
     //--------------------------------------------------------------------------
     /// writeLog
-    @inlinable
-    func writeLog(_ message: @autoclosure () -> String,
-                  level: LogLevel = .error,
-                  indent: Int = 0,
-                  trailing: String = "",
-                  minCount: Int = 80)
-    {
+    @inlinable func writeLog(
+        _ message: @autoclosure () -> String,
+        level: LogLevel = .error,
+        indent: Int = 0,
+        trailing: String = "",
+        minCount: Int = 80
+    ) {
         guard willLog(level: level) else { return }
         logWriter.write(level: level,
                         message: message(),
@@ -91,13 +90,13 @@ public extension _Logging {
     //--------------------------------------------------------------------------
     // diagnostic
     #if DEBUG
-    @inlinable
-    func diagnostic(_ message: @autoclosure () -> String,
-                    categories: LogCategories,
-                    indent: Int = 0,
-                    trailing: String = "",
-                    minCount: Int = 80)
-    {
+    @inlinable func diagnostic(
+        _ message: @autoclosure () -> String,
+        categories: LogCategories,
+        indent: Int = 0,
+        trailing: String = "",
+        minCount: Int = 80
+    ) {
         guard willLog(level: .diagnostic) else { return}
         // if subcategories have been selected on the logWriter object
         // then make sure the caller's category is desired
@@ -110,12 +109,12 @@ public extension _Logging {
                         trailing: trailing, minCount: minCount)
     }
     #else
-    @inlinable
-    func diagnostic(_ message: @autoclosure () -> String,
-                    categories: LogCategories,
-                    indent: Int = 0,
-                    trailing: String = "",
-                    minCount: Int = 80) { }
+    @inlinable func diagnostic(
+        _ message: @autoclosure () -> String,
+        categories: LogCategories,
+        indent: Int = 0,
+        trailing: String = "",
+        minCount: Int = 80) { }
     #endif
 }
 
@@ -404,11 +403,11 @@ public let blockString      = "[\(setText("BLOCK    ", color: .red))]"
 public let copyString       = "[\(setText("COPY     ", color: .blue))]"
 public let createString     = "[\(setText("CREATE   ", color: .cyan))]"
 public let deviceString     = "[\(setText("DEVICE   ", color: .cyan))]"
-public let functionString   = "[\(setText("FUNCTION ", color: .yellow))]"
+public let expandingString  = "[\(setText("EXPANDING", color: .cyan))]"
 public let layoutString     = "[\(setText("LAYOUT   ", color: .yellow))]"
 public let mutationString   = "[\(setText("MUTATE   ", color: .blue))]"
-public let expandingString  = "[\(setText("EXPANDING", color: .cyan))]"
-public let recordString     = "[\(setText("RECORD   ", color: .cyan))]"
+public let queueString      = "[\(setText("QUEUE    ", color: .yellow))] >>>"
+public let recordString     = "[\(setText("RECORD   ", color: .yellow))]"
 public let referenceString  = "[\(setText("REFERENCE", color: .cyan))]"
 public let releaseString    = "[\(setText("RELEASE  ", color: .cyan))]"
 public let reorderString    = "[\(setText("REORDER  ", color: .blue))]"

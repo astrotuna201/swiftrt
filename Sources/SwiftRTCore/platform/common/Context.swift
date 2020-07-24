@@ -24,10 +24,10 @@ import Darwin.C
 //==============================================================================
 // Platform types
 #if canImport(CCuda)
-public typealias PlatformType = CudaService
+public typealias PlatformType = CudaPlatform
 public typealias StorageBufferType = DiscreteStorage
 #else
-public typealias PlatformType = CpuService
+public typealias PlatformType = CpuPlatform
 public typealias StorageBufferType = DiscreteStorage
 //public typealias StorageBufferType = CpuStorage
 #endif
@@ -35,8 +35,7 @@ public typealias StorageBufferType = DiscreteStorage
 //==============================================================================
 /// Context
 /// Manages the scope for the current devices, log, and error handlers
-public final class Context {
-    public static var cpuQueueMode = PlatformType.defaultCpuQueueMode
+public final class Context: Logging {
     /// TODO: evaluate perf of making thread local
     public static let local: Context = Context()
     
@@ -50,11 +49,16 @@ public final class Context {
 
     //-------------------------------------
     /// counter for unique buffer ids
-    public static var bufferIdCounter: Int = 0
+    public static var bufferIdCounter: Int = -1
     /// a platform instance unique id for queue events
-    public static var queueCounter: Int = 0
+    public static var queueCounter: Int = -1
     /// a platform instance unique id for queue events
-    public static var queueEventCounter: Int = 0
+    public static var queueEventCounter: Int = -1
+    /// the number of async cpu queues to create
+    public static var cpuQueueCount: Int = PlatformType.defaultCpuQueueCount
+    /// the number of async cpu queues to create
+    public static var acceleratorQueueCount: Int =
+        PlatformType.defaultAcceleratorQueueCount
 
     /// a static instance of the compute platform
     /// The platform type is specified in Types.swift and selected
@@ -69,6 +73,11 @@ public final class Context {
     }
     
     //--------------------------------------------------------------------------
+    @inlinable public static var discreteMemoryDeviceId: Int {
+        local.platform.discreteMemoryDeviceId
+    }
+    
+    //--------------------------------------------------------------------------
     /// the Platform log writing object
     @inlinable public static var log: Log {
         get { logWriter }
@@ -76,23 +85,24 @@ public final class Context {
     }
 
     /// a counter used to uniquely identify queue events for diagnostics
-    @inlinable static var nextQueueId: Int {
-        defer { queueCounter += 1 }
+    @inlinable public static var nextQueueId: Int {
+        queueCounter += 1
         return queueCounter
     }
     
     /// a counter used to uniquely identify queue events for diagnostics
-    @inlinable static var nextQueueEventId: Int {
-        defer { queueEventCounter += 1 }
+    @inlinable public static var nextQueueEventId: Int {
+        queueEventCounter += 1
         return queueEventCounter
     }
     
     /// nextBufferId
     @inlinable public static var nextBufferId: Int {
-        defer { bufferIdCounter += 1 }
+        bufferIdCounter += 1
         return bufferIdCounter
     }
 
+    //--------------------------------------------------------------------------
     /// the currently scoped device that platform functions will use
     /// - Returns: the current device queue
     @inlinable public static var currentDevice: PlatformType.Device {
@@ -110,12 +120,9 @@ public final class Context {
         Context.local.platform.currentQueue
     }
 
-    /// - Returns: the selected cpu device queue
-    @inlinable public static func cpuQueue(_ id: Int)
-    -> PlatformType.Device.Queue
-    {
-        let qid = id % Context.local.platform.devices[0].queues.count
-        return Context.local.platform.devices[0].queues[qid]
+    /// the application thread data interchange queue
+    @inlinable public static var appThreadQueue: PlatformType.Device.Queue {
+        Context.local.platform.appThreadQueue
     }
 
     //--------------------------------------------------------------------------

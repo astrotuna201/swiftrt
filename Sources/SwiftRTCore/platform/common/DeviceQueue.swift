@@ -24,14 +24,14 @@ public protocol DeviceQueue: Logging {
     var creatorThread: Thread { get }
     /// used to configure event creation
     var defaultQueueEventOptions: QueueEventOptions { get set }
-    /// the id of the associated device
-    var deviceId: Int { get }
+    /// the index of the parent device in the `devices` collection
+    var deviceIndex: Int { get }
     /// the name of the associated device, used in diagnostics
     var deviceName: String { get }
-    /// the id of the queue
+    /// the async cpu `queue` dispatch group used to wait for queue completion
+    var group: DispatchGroup { get }
+    /// a unique queue id used to identify data movement across queues
     var id: Int { get }
-    /// the logging configuration for the queue
-    var logInfo: LogInfo { get }
     /// the type of memory associated with the queue's device
     var memoryType: MemoryType { get }
     /// specifies if work is queued sync or async
@@ -59,7 +59,7 @@ public protocol DeviceQueue: Logging {
     /// - Parameters:
     ///  - src: the source buffer
     ///  - dst: the destination buffer
-    func copyAsync(from src: DeviceMemory, to dst: DeviceMemory) throws
+    func copy(from src: DeviceMemory, to dst: DeviceMemory) throws
     
     /// createEvent(options:
     /// creates a queue event used for synchronization and timing measurements
@@ -82,9 +82,9 @@ public protocol DeviceQueue: Logging {
     ///  - event: the event to wait for
     func wait(for event: QueueEvent)
     
-    /// waitUntilQueueIsComplete
+    /// waitForCompletion
     /// blocks the caller until all events in the queue have completed
-    func waitUntilQueueIsComplete()
+    func waitForCompletion()
 }
 
 //==============================================================================
@@ -100,13 +100,19 @@ extension DeviceQueue {
         let buffer = UnsafeMutableRawBufferPointer
                 .allocate(byteCount: byteCount,
                           alignment: MemoryLayout<Int>.alignment)
-        return CpuDeviceMemory(deviceId, deviceName, buffer: buffer)
+        return CpuDeviceMemory(deviceIndex, buffer, memoryType)
     }
     
     //--------------------------------------------------------------------------
-    /// copyAsync
-    public func copyAsync(from src: DeviceMemory, to dst: DeviceMemory) throws {
-        dst.buffer.copyMemory(from: UnsafeRawBufferPointer(src.buffer))
+    /// copy
+    public func copy(from src: DeviceMemory, to dst: DeviceMemory) throws {
+        if mode == .async {
+            queue.async(group: group) {
+                dst.buffer.copyMemory(from: UnsafeRawBufferPointer(src.buffer))
+            }
+        } else {
+            dst.buffer.copyMemory(from: UnsafeRawBufferPointer(src.buffer))
+        }
     }
     
     //--------------------------------------------------------------------------
@@ -115,10 +121,7 @@ extension DeviceQueue {
     @inlinable public func createEvent(
         options: QueueEventOptions
     ) -> QueueEvent {
-        let event = CpuQueueEvent(options: options)
-        diagnostic("\(createString) QueueEvent(\(event.id)) on " +
-                    "\(deviceName)_\(name)", categories: .queueAlloc)
-        return event
+        CpuQueueEvent(options: options)
     }
 
     @inlinable public func createEvent() -> QueueEvent {
@@ -129,15 +132,15 @@ extension DeviceQueue {
     /// deviceName
     /// returns a diagnostic name for the device assoicated with this queue
     @inlinable public var deviceName: String {
-        Context.local.platform.devices[deviceId].name
+        Context.local.platform.devices[deviceIndex].name
     }
     
     //--------------------------------------------------------------------------
     /// record(event:
     @discardableResult
     @inlinable public func record(event: QueueEvent) -> QueueEvent {
-        diagnostic("\(recordString) QueueEvent(\(event.id)) on " +
-                    "\(deviceName)_\(name)", categories: .queueSync)
+        diagnostic("\(recordString) event(\(event.id)) on " +
+                    "\(name)", categories: .queueSync)
         
         // set event time
         if defaultQueueEventOptions.contains(.timing) {
@@ -145,10 +148,13 @@ extension DeviceQueue {
         }
         
         // record the event
-        queue.async {
+        if mode == .async {
+            queue.async(group: group) {
+                event.signal()
+            }
+        } else {
             event.signal()
         }
-        
         return event
     }
     
@@ -156,17 +162,26 @@ extension DeviceQueue {
     /// wait(for event:
     /// waits until the event has occurred
     @inlinable public func wait(for event: QueueEvent) {
-        guard !event.occurred else { return }
-        diagnostic("\(waitString) QueueEvent(\(event.id)) on " +
-                    "\(deviceName)_\(name)", categories: .queueSync)
-        event.wait()
+        #if DEBUG
+        diagnostic("\(waitString) \(name) will wait for event(\(event.id))",
+                   categories: .queueSync)
+        #endif
+        if mode == .async {
+            queue.async(group: group) {
+                event.wait()
+            }
+        } else {
+            event.wait()
+        }
     }
     
     //--------------------------------------------------------------------------
-    // waitUntilQueueIsComplete
+    // waitForCompletion
     // the synchronous queue completes work as it is queued,
     // so it is always complete
-    @inlinable public func waitUntilQueueIsComplete() {
-        wait(for: record(event: createEvent(options: QueueEventOptions())))
+    @inlinable public func waitForCompletion() {
+        if mode == .async {
+            group.wait()
+        }
     }
 }

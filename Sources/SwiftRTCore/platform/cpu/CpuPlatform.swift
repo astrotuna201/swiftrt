@@ -15,30 +15,37 @@
 //
 
 //==============================================================================
-/// CpuService
+/// CpuPlatform
 /// The collection of compute resources available to the application
 /// on the machine where the process is being run.
-public class CpuService: Platform {
+public class CpuPlatform: Platform {
     // properties
-    public static let defaultCpuQueueMode: DeviceQueueMode = .sync
+    public static var defaultCpuQueueCount: Int = 1
+    public static var defaultAcceleratorQueueCount: Int = 0
+    public var discreteMemoryDeviceId: Int { 1 }
     public var devices: [CpuDevice]
-    public let logInfo: LogInfo
     public let name: String
     public var queueStack: [CpuQueue]
+    public let appThreadQueue: CpuQueue
 
     //--------------------------------------------------------------------------
     @inlinable public init() {
-        name = "CpuService"
-        logInfo = LogInfo(logWriter: Context.log, logLevel: .error,
-                          namePath: name, nestingLevel: 0)
-        devices = [
-            CpuDevice(id: 0,
-                      parent: logInfo,
-                      memoryType: .unified,
-                      queueMode: Context.cpuQueueMode)
-        ]
+        name = "\(Self.self)"
         
-        // select device 0 queue 0 by default
-        queueStack = [devices[0].queues[0]]
+        // create the device and default number of async queues
+        let device = CpuDevice(index: 0, memoryType: .unified)
+
+        let test = CpuDevice(index: 1, memoryType: .discrete)
+        devices = [device, test]
+
+        // create the application thread data interchange queue
+        appThreadQueue = CpuQueue(deviceIndex: 0,
+                             name: "appThread",
+                             queueMode: .sync,
+                             memoryType: .unified)
+        
+        // if the number of requested async queues is 0, then make the
+        // appThreadQueue the default
+        queueStack = device.queues.count == 0 ? [appThreadQueue] : [device.queues[0]]
     }
 }

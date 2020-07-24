@@ -53,14 +53,26 @@ public final class CpuStorage: StorageBuffer {
             alignment: alignment)
 
         #if DEBUG
-        diagnostic("\(createString) \(diagnosticName) " +
+        diagnostic("\(allocString) \(diagnosticName) " +
             "\(Element.self)[\(count)]", categories: .dataAlloc)
         #endif
     }
 
     //--------------------------------------------------------------------------
+    /// `init(storedElement:name:
+    public convenience init<Element>(storedElement: Element, name: String) {
+        // TODO: change to data member to avoid heap alloc
+        self.init(storedType: Element.self, count: 1, name: name)
+        hostBuffer.bindMemory(to: Element.self)[0] = storedElement
+    }
+    
+    //--------------------------------------------------------------------------
     // init(other:queue:
-    @inlinable public init(copying other: CpuStorage, using queue: DeviceQueue){
+    @inlinable public init<Element>(
+        type: Element.Type,
+        copying other: CpuStorage,
+        using queue: DeviceQueue
+    ){
         alignment = other.alignment
         byteCount = other.byteCount
         id = Context.nextBufferId
@@ -78,9 +90,10 @@ public final class CpuStorage: StorageBuffer {
     }
 
     //--------------------------------------------------------------------------
-    // init(buffer:
+    // init(buffer:name:
     @inlinable public init<Element>(
-        referenceTo buffer: UnsafeBufferPointer<Element>
+        referenceTo buffer: UnsafeBufferPointer<Element>,
+        name: String
     ) {
         alignment = MemoryLayout<Element>.alignment
         byteCount = MemoryLayout<Element>.size * buffer.count
@@ -89,18 +102,19 @@ public final class CpuStorage: StorageBuffer {
         self.id = Context.nextBufferId
         self.isReadOnly = true
         self.isReference = true
-        self.name = "Tensor"
+        self.name = name
 
         #if DEBUG
-        diagnostic("\(createString) Reference \(diagnosticName) " +
+        diagnostic("\(referenceString) \(diagnosticName) " +
             "\(Element.self)[\(buffer.count)]", categories: .dataAlloc)
         #endif
     }
     
     //--------------------------------------------------------------------------
-    // init(type:buffer:
+    // init(type:buffer:name:
     @inlinable public init<Element>(
-        referenceTo buffer: UnsafeMutableBufferPointer<Element>
+        referenceTo buffer: UnsafeMutableBufferPointer<Element>,
+        name: String
     ) {
         alignment = MemoryLayout<Element>.alignment
         byteCount = MemoryLayout<Element>.size * buffer.count
@@ -108,10 +122,10 @@ public final class CpuStorage: StorageBuffer {
         self.id = Context.nextBufferId
         self.isReadOnly = false
         self.isReference = true
-        self.name = "Tensor"
+        self.name = name
 
         #if DEBUG
-        diagnostic("\(createString) Reference \(diagnosticName) " +
+        diagnostic("\(referenceString) \(diagnosticName) " +
             "\(Element.self)[\(buffer.count)]", categories: .dataAlloc)
         #endif
     }

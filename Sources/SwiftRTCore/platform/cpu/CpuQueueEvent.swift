@@ -21,7 +21,6 @@ import Foundation
 /// the wait semaphore
 public class CpuQueueEvent: QueueEvent {
     // properties
-    public var occurred: Bool
     public var recordedTime: Date?
     public let id: Int
     public let semaphore: DispatchSemaphore
@@ -29,13 +28,14 @@ public class CpuQueueEvent: QueueEvent {
     // initializers
     @inlinable public init(options: QueueEventOptions) {
         id = Context.nextQueueEventId
-        occurred = false
         semaphore = DispatchSemaphore(value: 0)
     }
 
     // signals that the event has occurred
     public func signal() {
-        occurred = true
+        #if DEBUG
+        diagnostic("\(signaledString) event(\(id))", categories: .queueSync)
+        #endif
         semaphore.signal()
     }
     

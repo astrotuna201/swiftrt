@@ -17,122 +17,116 @@ import Foundation
 import CCuda
 
 //==============================================================================
-/// CudaService
+/// CudaPlatform
 /// The collection of compute resources available to the application
 /// on the machine where the process is being run.
-public class CudaService: Platform {
+public class CudaPlatform: Platform {
     // properties
-    public static let defaultCpuQueueMode: DeviceQueueMode = .async
+    public static var defaultCpuQueueCount: Int = 1
+    public static var defaultAcceleratorQueueCount: Int = 2
+    public var discreteMemoryDeviceId: Int = 1
     public var devices: [CudaDevice]
     public let logInfo: LogInfo
     public let name: String
     public var queueStack: [CudaQueue]
+    public let appThreadQueue: CudaQueue
 
     //--------------------------------------------------------------------------
     // initializer
     @inlinable public init() {
-        name = "Cuda"
+        name = "\(Self.self)"
         logInfo = LogInfo(logWriter: Context.log, logLevel: .error,
                           namePath: name, nestingLevel: 0)
-        
+
+        //----------------------------
+        // CudaDevice is overloaded to avoid using Swift existentials
+        // to support both cpu and gpu operations.
+        // Device 0 is the cpu
+        let cpuDevice = CudaDevice(index: 0)
+        devices = [cpuDevice]
+
+        appThreadQueue = CudaQueue(deviceIndex: 0,
+                              name: "appThread",
+                              queueMode: .sync,
+                              useGpu: false)
+
+        //----------------------------
         // query cuda to get number of installed devices
-        devices = []
         queueStack = []
-        var deviceCount: CInt = 0
-        do {
-            try cudaCheck(status: cudaGetDeviceCount(&deviceCount))
-        } catch {
-            writeLog("cudaGetDeviceCount failed. " +
-                "The Cuda driver may be in an unstable state",
-                     level: .error)
-            fatalError()
+        var gpuDeviceCount: CInt = 0
+        cudaCheck(cudaGetDeviceCount(&gpuDeviceCount))
+
+        // add device for each reported gpu
+        for i in 1..<Int(gpuDeviceCount + 1) {
+            devices.append(CudaDevice(index: i))
         }
-        
-        if deviceCount == 0 {
+
+        //----------------------------
+        // select first gpu queue 0 as default
+        if gpuDeviceCount == 0 {
             writeLog("There are no '\(self.name)' devices installed",
-                level: .warning)
+                     level: .warning)
+            queueStack = [appThreadQueue]
+        } else if devices[0].queues.count > 0 {
+            queueStack = [devices[1].queues[0]]
+        } else {
+            queueStack = [appThreadQueue]
         }
-        
-        // add a device whose queue is synchronized with the application
-        devices.append(CudaDevice(id: 0, parent: logInfo,
-                                  queueMode: Context.cpuQueueMode))
 
-        // add device object for each id reported
-        for i in 0..<Int(deviceCount) {
-            devices.append(CudaDevice(id: i + 1, parent: logInfo,
-                                      queueMode: Context.cpuQueueMode))
-        }
-        
-        // select device 1 queue 0 by default
-        queueStack = [validQueue(deviceCount == 0 ? 0 : 1, 0)]
-
-        // report device stats
-        if willLog(level: .diagnostic) {
-            for device in devices {
-                diagnostic("\(deviceString) \(device.name)", categories: .device)
-                diagnostic("    device name:   \(device.properties[.deviceName] ?? "cpu hardware name")", categories: .device)
-                diagnostic("    global memory: \(device.properties[.globalMemory] ?? "cpu global memory")", categories: .device)
-                if let computeCapability = device.properties[.computeCapability] {
-                    diagnostic("    compute capability: \(computeCapability)", categories: .device)
-                }
-                if let multiprocessors = device.properties[.multiprocessors] {
-                    diagnostic("    multiprocessors:    \(multiprocessors)", categories: .device)
-                }
-                if let addressing = device.properties[.unifiedAddressing] {
-                    diagnostic("    unified addressing: \(addressing)", categories: .device)
-                }
-            }
-        }
+        diagnostic("\(deviceString) default: \(queueStack[0].name)",
+                    categories: .device)
     }
 }
 
 //==============================================================================
 // cudaCheck cudaError_t
 @inlinable public func cudaCheck(
-    status: cudaError_t,
+    _ status: cudaError_t,
     file: String = #file,
     function: String = #function,
     line: Int = #line
-) throws {
+) {
     if status != cudaSuccess {
         let location = "CUDA error in \(file) at \(function):\(line)"
         let message = String(utf8String: cudaGetErrorString(status))!
         cudaDeviceReset()
-        throw ServiceError.functionFailure(location: location, message: message)
+        Context.currentQueue.writeLog("\(message) at \(location)")
+        fatalError("unrecoverable error")
     }
 }
 
 //==============================================================================
 // cudaCheck cudnnStatus_t
 @inlinable public func cudaCheck(
-    status: cudnnStatus_t,
+    _ status: cudnnStatus_t,
     file: String = #file,
     function: String = #function,
-    line: Int = #line)
-throws {
+    line: Int = #line
+) {
     if status != CUDNN_STATUS_SUCCESS {
         let location = "CUDNN error in \(file) at \(function):\(line)"
         let message = String(utf8String: cudnnGetErrorString(status))!
         print(message)
         cudaDeviceReset()
-        throw ServiceError.functionFailure(location: location, message: message)
+        Context.currentQueue.writeLog("\(message) at \(location)")
+        fatalError("unrecoverable error")
     }
 }
 
 //==============================================================================
 // cudaCheck cublasStatus_t
 @inlinable public func cudaCheck(
-    status: cublasStatus_t,
+    _ status: cublasStatus_t,
     file: String = #file,
     function: String = #function,
     line: Int = #line
-) throws {
+) {
     if status != CUBLAS_STATUS_SUCCESS {
         let location = "CUBLAS error in \(file) at \(function):\(line)"
         let message = String(utf8String: cublasGetErrorString(status))!
-            + "code=(\(status))"
         cudaDeviceReset()
-        throw ServiceError.functionFailure(location: location, message: message)
+        Context.currentQueue.writeLog("\(message) at \(location)")
+        fatalError("unrecoverable error")
     }
 }
 
@@ -168,7 +162,7 @@ throws {
         let message = String(utf8String: curandGetErrorString(status))!
             + "code=(\(status))"
         cudaDeviceReset()
-        throw ServiceError.functionFailure(location: location, message: message)
+        throw PlatformError.functionFailure(location: location, message: message)
     }
 }
 
@@ -192,6 +186,22 @@ extension curandStatus_t : Hashable {}
         CURAND_STATUS_INTERNAL_ERROR: "CURAND_STATUS_INTERNAL_ERROR",
     ]
     return messages[status] ?? "Unknown curandStatus_t value: \(status)"
+}
+
+//==============================================================================
+// leading dimension for matmul
+public extension Tensor {
+    @inlinable var leadingDimension: Int {
+        assert(Shape.rank == 2 || Shape.rank == 3, "must be rank 2 or 3")
+        let i = Shape.rank == 2 ? 0 : 1
+        let n = shape[i + 1]
+        switch order {
+        case .col, .row: return strides[i]
+        case .colTiled32: return 32 * shape[i]
+        case .colTiledTC32x8: return 32 * n.roundUp(toMultipleOf: 8)
+        case .colTiledTC32x32: return 32 * n.roundUp(toMultipleOf: 32)
+        }
+    }
 }
 
 //==============================================================================
@@ -220,47 +230,6 @@ extension ReductionOp {
 }
 
 //------------------------------------------------------------------------------
-// ScalarType extension
-extension cudnnDataType_t : Hashable {}
-
-extension ScalarType {
-    @inlinable public init(cudnn: cudnnDataType_t) {
-        let types: [cudnnDataType_t : ScalarType] = [
-            CUDNN_DATA_INT8: .real8U,
-            CUDNN_DATA_INT32: .real32I,
-            CUDNN_DATA_HALF: .real16F,
-            CUDNN_DATA_FLOAT: .real32F,
-            CUDNN_DATA_DOUBLE: .real64F,
-        ]
-        assert(types[cudnn] != nil, "Unknown cudnnDataType_t")
-        self = types[cudnn]!
-    }
-
-    @inlinable public var cudnn: cudnnDataType_t {
-        switch self {
-        case .real8U: return CUDNN_DATA_INT8
-        case .real32I: return CUDNN_DATA_INT32
-        case .real16F: return CUDNN_DATA_HALF
-        case .real32F: return CUDNN_DATA_FLOAT
-        case .real64F: return CUDNN_DATA_DOUBLE
-        default: fatalError("Invalid state")
-        }
-    }
-
-    @inlinable public var cuda: cudaDataType {
-        let types: [ScalarType : cudaDataType] = [
-            .real16F: CUDA_R_16F,
-            .real32F: CUDA_R_32F,
-            .real64F: CUDA_R_64F,
-            .real8U:  CUDA_R_8U,
-            .real32I: CUDA_R_32I,
-        ]
-        assert(types[self] != nil, "Unknown cudnnDataType_t")
-        return types[self]!
-    }
-}
-
-//------------------------------------------------------------------------------
 // NanPropagation
 extension NanPropagation {
     @inlinable public var cudnn: cudnnNanPropagation_t {
@@ -278,8 +247,37 @@ extension TransposeOp {
         switch self {
         case .noTranspose: return CUBLAS_OP_N
         case .transpose: return CUBLAS_OP_T
-        case .conjugateTranspose: return CUBLAS_OP_C
+        case .hermitian: return CUBLAS_OP_HERMITAN
+        case .conjugateTranspose: return CUBLAS_OP_CONJG
         }
+    }
+
+    @inlinable public init(_ op: cublasOperation_t) {
+        switch op {
+        case CUBLAS_OP_N: self = .noTranspose
+        case CUBLAS_OP_T: self = .transpose
+        case CUBLAS_OP_C, CUBLAS_OP_HERMITAN: self = .hermitian
+        case CUBLAS_OP_CONJG: self = .conjugateTranspose
+        default: fatalError("unsupported cublasOperation_t")
+        }
+    }
+}
+
+//==============================================================================
+/// CublasHandle
+/// creates and manages the lifetime of a cublas light handle
+public final class CublasHandle 
+{
+    public let handle: cublasLtHandle_t
+
+    @inlinable public init() {
+        var temp: cublasLtHandle_t?
+        cudaCheck(cublasLtCreate(&temp))
+        handle = temp!
+    }
+
+    @inlinable deinit {
+        cudaCheck(cublasLtDestroy(handle))
     }
 }
 
@@ -288,78 +286,28 @@ extension TransposeOp {
 /// creates and manages the lifetime of a cudnn handle
 public final class CudnnHandle {
     // properties
-    public let deviceId: Int
+    public let gpuId: Int
     public let handle: cudnnHandle_t
 
     //--------------------------------------------------------------------------
     /// init
     /// - Parameters:
-    ///  - deviceId: the associated device
+    ///  - gpuId: the associated device
     ///  - stream: the associated stream
-    @inlinable init(deviceId: Int, using stream: cudaStream_t) {
-        do {
-            self.deviceId = deviceId
-            try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
+    @inlinable init(gpuId: Int, using stream: cudaStream_t) {
+        self.gpuId = gpuId
+        cudaCheck(cudaSetDevice(Int32(gpuId)))
 
-            var temp: cudnnHandle_t?
-            try cudaCheck(status: cudnnCreate(&temp))
-            handle = temp!
-            try cudaCheck(status: cudnnSetStream(handle, stream))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
+        var temp: cudnnHandle_t?
+        cudaCheck(cudnnCreate(&temp))
+        handle = temp!
+        cudaCheck(cudnnSetStream(handle, stream))
     }
 
     // deinit
     @inlinable deinit {
-        do {
-            try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
-            try cudaCheck(status: cudnnDestroy(handle))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
-    }
-}
-
-//==============================================================================
-/// CublasHandle
-/// creates and manages the lifetime of a cublas handle
-public final class CublasHandle {
-    // properties
-    public let deviceId: Int
-    public let handle: cublasHandle_t
-
-    //--------------------------------------------------------------------------
-    /// init
-    /// - Parameters:
-    ///  - deviceId: the associated device
-    ///  - stream: the associated stream
-    @inlinable public init(deviceId: Int, using stream: cudaStream_t) {
-        do {
-            self.deviceId = deviceId
-            try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
-
-            var temp: cublasHandle_t?
-            try cudaCheck(status: cublasCreate_v2(&temp))
-            handle = temp!
-            try cudaCheck(status: cublasSetStream_v2(handle, stream))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
-    }
-
-    // deinit
-    @inlinable deinit {
-        do {
-            try cudaCheck(status: cudaSetDevice(Int32(deviceId)))
-            try cudaCheck(status: cublasDestroy_v2(handle))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
+        cudaCheck(cudaSetDevice(Int32(gpuId)))
+        cudaCheck(cudnnDestroy(handle))
     }
 }
 
@@ -377,22 +325,26 @@ public class DropoutDescriptor {
         seed: UInt64,
         tensorDesc: TensorDescriptor
     ) {
-        do {
             // create the descriptor
             var temp: cudnnDropoutDescriptor_t?
-            try cudaCheck(status: cudnnCreateDropoutDescriptor(&temp))
+            cudaCheck(cudnnCreateDropoutDescriptor(&temp))
             desc = temp!
 
             // get states size
             var stateSizeInBytes = 0
-            try cudaCheck(status: cudnnDropoutGetStatesSize(
+            cudaCheck(cudnnDropoutGetStatesSize(
                 tensorDesc.desc, &stateSizeInBytes))
 
             // create states array
-            states = try stream.allocate(byteCount: stateSizeInBytes)
+            do {
+                states = try stream.allocate(byteCount: stateSizeInBytes)
+            } catch {
+                Context.currentQueue.writeLog("\(createString) \(error)")
+                fatalError()
+            }
 
             // initialize
-            try cudaCheck(status: cudnnSetDropoutDescriptor(
+            cudaCheck(cudnnSetDropoutDescriptor(
                 desc,
                 stream.cudnn.handle,
                 Float(drop),
@@ -400,19 +352,10 @@ public class DropoutDescriptor {
                 states.buffer.count,
                 seed
             ))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
     }
 
     @inlinable deinit {
-        do {
-            try cudaCheck(status: cudnnDestroyDropoutDescriptor(desc))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
+        cudaCheck(cudnnDestroyDropoutDescriptor(desc))
     }
 }
 
@@ -424,32 +367,22 @@ public final class FilterDescriptor {
 
     // initializers
     @inlinable public init<S,E: ScalarElement>(_ tensor: Tensor<S,E>) {
-        do {
-            // create the descriptor
-            var temp: cudnnFilterDescriptor_t?
-            try cudaCheck(status: cudnnCreateFilterDescriptor(&temp))
-            desc = temp!
+        // create the descriptor
+        var temp: cudnnFilterDescriptor_t?
+        cudaCheck(cudnnCreateFilterDescriptor(&temp))
+        desc = temp!
 
-            // initialize
-            try cudaCheck(status: cudnnSetFilterNdDescriptor(
-                desc,
-                E.type.cudnn,
-                CUDNN_TENSOR_NHWC,
-                Int32(tensor.count),
-                tensor.shape.asDeviceIndex))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
+        // initialize
+        cudaCheck(cudnnSetFilterNdDescriptor(
+            desc,
+            E.type.cudnn,
+            CUDNN_TENSOR_NHWC,
+            Int32(tensor.count),
+            tensor.shape.asInt32))
     }
 
     @inlinable deinit {
-        do {
-            try cudaCheck(status: cudnnDestroyFilterDescriptor(desc))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
+        cudaCheck(cudnnDestroyFilterDescriptor(desc))
     }
 }
 
@@ -462,42 +395,26 @@ public final class LRNDescriptor {
 
     // initializers
     @inlinable public init(N: Int, alpha: Double, beta: Double, K: Double) {
-        do {
-            guard N >= Int(CUDNN_LRN_MIN_N) && N <= Int(CUDNN_LRN_MAX_N) else {
-                throw ServiceError.rangeError(
-                    "N = \(N) is invalid. Range \(CUDNN_LRN_MIN_N) " +
-                            "to \(CUDNN_LRN_MAX_N)")
-            }
-            guard K >= CUDNN_LRN_MIN_K else {
-                throw ServiceError.rangeError(
-                    "K = \(K) is invalid. Must be >= to \(CUDNN_LRN_MIN_K)")
-            }
-            guard beta >= CUDNN_LRN_MIN_BETA else {
-                throw ServiceError.rangeError(
-                    "beta = \(beta) is invalid. Must be >= to \(CUDNN_LRN_MIN_BETA)")
-            }
+        assert(N >= Int(CUDNN_LRN_MIN_N) && N <= Int(CUDNN_LRN_MAX_N),
+               "N = \(N) is invalid. Range \(CUDNN_LRN_MIN_N) " +
+               "to \(CUDNN_LRN_MAX_N)")
+        assert(K >= CUDNN_LRN_MIN_K,
+               "K = \(K) is invalid. Must be >= to \(CUDNN_LRN_MIN_K)")
+        assert(beta >= CUDNN_LRN_MIN_BETA,
+               "beta = \(beta) is invalid. Must be >= to \(CUDNN_LRN_MIN_BETA)")
 
-            // create the descriptor
-            var temp: cudnnLRNDescriptor_t?
-            try cudaCheck(status: cudnnCreateLRNDescriptor(&temp))
-            desc = temp!
+        // create the descriptor
+        var temp: cudnnLRNDescriptor_t?
+        cudaCheck(cudnnCreateLRNDescriptor(&temp))
+        desc = temp!
 
-            // initialize
-            try cudaCheck(status: cudnnSetLRNDescriptor(
-                desc, CUnsignedInt(N), alpha, beta, K))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
+        // initialize
+        cudaCheck(cudnnSetLRNDescriptor(
+            desc, CUnsignedInt(N), alpha, beta, K))
     }
 
     @inlinable deinit {
-        do {
-            try cudaCheck(status: cudnnDestroyLRNDescriptor(desc))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
+        cudaCheck(cudnnDestroyLRNDescriptor(desc))
     }
 }
 
@@ -514,23 +431,20 @@ public final class TensorDescriptor {
         strides: S,
         scalarType: ScalarType
     ) {
-        do {
-            // create the descriptor
-            var temp: cudnnTensorDescriptor_t?
-            try cudaCheck(status: cudnnCreateTensorDescriptor(&temp))
-            self.desc = temp!
+        assert(shape.count >= 4 && shape.count <= CUDNN_DIM_MAX,
+            "cudnn tensor rank must be between 4 and \(CUDNN_DIM_MAX)")
+        // create the descriptor
+        var temp: cudnnTensorDescriptor_t?
+        cudaCheck(cudnnCreateTensorDescriptor(&temp))
+        self.desc = temp!
 
-            // initialize
-            try cudaCheck(status: cudnnSetTensorNdDescriptor(
-                self.desc,
-                scalarType.cudnn,
-                Int32(shape.count),
-                shape.asDeviceIndex,
-                strides.asDeviceIndex))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
+        // initialize
+        cudaCheck(cudnnSetTensorNdDescriptor(
+            self.desc,
+            scalarType.cudnn,
+            Int32(shape.count),
+            shape.asInt32,
+            strides.asInt32))
     }
 
     @inlinable public init(owning desc: cudnnTensorDescriptor_t) {
@@ -539,12 +453,7 @@ public final class TensorDescriptor {
 
     //--------------------------------------------------------------------------
     @inlinable deinit {
-        do {
-            try cudaCheck(status: cudnnDestroyTensorDescriptor(desc))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
+        cudaCheck(cudnnDestroyTensorDescriptor(desc))
     }
 
     //--------------------------------------------------------------------------
@@ -558,23 +467,18 @@ public final class TensorDescriptor {
         var type = cudnnDataType_t(0)
         var numDims: Int32 = 0
 
-        do {
-            try cudaCheck(status: cudnnGetTensorNdDescriptor(
-                desc,
-                Int32(reqDims),
-                &type,
-                &numDims,
-                &dims,
-                &strides
-            ))
+        cudaCheck(cudnnGetTensorNdDescriptor(
+            desc,
+            Int32(reqDims),
+            &type,
+            &numDims,
+            &dims,
+            &strides
+        ))
 
-            return (dims[0..<Int(numDims)].map { Int($0) },
-                    strides[0..<Int(numDims)].map { Int($0) },
-                    ScalarType(cudnn: type))
-        } catch {
-            Context.currentQueue.writeLog("\(createString) \(error)")
-            fatalError()
-        }
+        return (dims[0..<Int(numDims)].map(Int.init),
+                strides[0..<Int(numDims)].map(Int.init),
+                ScalarType(type))
     }
 }
 
@@ -604,10 +508,10 @@ public final class ReductionTensorDescriptor {
         op: ReductionOp,
         nan: NanPropagation,
         scalarType: ScalarType
-    ) throws {
+    ) {
         // create the descriptor
         var temp: cudnnReduceTensorDescriptor_t?
-        try cudaCheck(status: cudnnCreateReduceTensorDescriptor(&temp))
+        cudaCheck(cudnnCreateReduceTensorDescriptor(&temp))
         desc = temp!
 
         let indicesAction = (op == .min || op == .max) ?
@@ -615,7 +519,7 @@ public final class ReductionTensorDescriptor {
                 CUDNN_REDUCE_TENSOR_NO_INDICES
 
         // initialize
-        try cudaCheck(status: cudnnSetReduceTensorDescriptor(
+        cudaCheck(cudnnSetReduceTensorDescriptor(
             desc,
             op.cudnn,
             scalarType == .real64F ? CUDNN_DATA_DOUBLE : CUDNN_DATA_FLOAT,
@@ -627,11 +531,6 @@ public final class ReductionTensorDescriptor {
 
     //--------------------------------------------------------------------------
     @inlinable deinit {
-        do {
-            try cudaCheck(status: cudnnDestroyReduceTensorDescriptor(desc))
-        } catch {
-            Context.currentQueue.writeLog(
-                "\(releaseString) \(Self.self) \(error)")
-        }
+        cudaCheck(cudnnDestroyReduceTensorDescriptor(desc))
     }
 }

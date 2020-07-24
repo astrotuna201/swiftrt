@@ -52,15 +52,31 @@ public protocol StorageBuffer: class, Logging {
     )
     
     //--------------------------------------------------------------------------
-    /// `init(other:queue:
-    /// creates a copy of the storage using `Context.currentQueue`
+    /// `init(single:name:
+    /// creates storage for a single element value
     /// - Parameters:
-    ///  - other: the storage to copy
-    ///  - queue: the device queue to use
-    init(copying other: Self, using queue: DeviceQueue)
+    ///  - storedElement: the stored element
+    ///  - name: the name of the tensor
+    init<Element>(
+        storedElement: Element,
+        name: String
+    )
     
     //--------------------------------------------------------------------------
-    /// `init(buffer:
+    /// `init(type:other:queue:`
+    /// creates a copy of the storage using `Context.currentQueue`
+    /// - Parameters:
+    ///  - type: the type of element to copy
+    ///  - other: the storage to copy
+    ///  - queue: the device queue to use
+    init<Element>(
+        type: Element.Type,
+        copying other: Self,
+        using queue: DeviceQueue
+    )
+    
+    //--------------------------------------------------------------------------
+    /// `init(buffer:name:`
     /// creates an element buffer whose data is managed by the application.
     /// No memory is allocated, so the buffer must point to valid data space.
     /// This can be used to access things like hardware buffers or
@@ -68,15 +84,19 @@ public protocol StorageBuffer: class, Logging {
     /// requiring an additional copy operation.
     /// - Parameters:
     ///  - buffer: the referenced `Element` buffer
-    init<Element>(referenceTo buffer: UnsafeBufferPointer<Element>)
+    ///  - name: the name of the tensor
+    init<Element>(referenceTo buffer: UnsafeBufferPointer<Element>,
+                  name: String)
     
     //--------------------------------------------------------------------------
-    /// `init(buffer:layout:`
+    /// `init(buffer:order:name:`
     /// creates an element buffer whose data is managed by the application.
     /// No memory is allocated, so the buffer must point to valid data space.
     /// - Parameters:
     ///  - buffer: the referenced `Element` buffer
-    init<Element>(referenceTo buffer: UnsafeMutableBufferPointer<Element>)
+    ///  - name: the name of the tensor
+    init<Element>(referenceTo buffer: UnsafeMutableBufferPointer<Element>,
+                  name: String)
     
     //--------------------------------------------------------------------------
     /// `init(blockSize:bufferedBlocks:sequence:`
@@ -91,7 +111,7 @@ public protocol StorageBuffer: class, Logging {
     ///  - stream: the I/O object for read/write operations
     init<S, Stream>(block shape: S, bufferedBlocks: Int, stream: Stream)
         where S: TensorShape, Stream: BufferStream
-        
+
     //--------------------------------------------------------------------------
     /// `read(type:index:count:queue:`
     /// - Parameters:
@@ -109,7 +129,7 @@ public protocol StorageBuffer: class, Logging {
         count: Int,
         using queue: DeviceQueue
     ) -> UnsafeBufferPointer<Element>
-    
+
     //--------------------------------------------------------------------------
     /// `readWrite(type:index:count:queue:`
     /// - Parameters:
@@ -127,28 +147,36 @@ public protocol StorageBuffer: class, Logging {
         count: Int,
         using queue: DeviceQueue
     ) -> UnsafeMutableBufferPointer<Element>
+    
+    //--------------------------------------------------------------------------
+    /// waitForCompletion
+    /// blocks the caller until pending write operations have completed
+    func waitForCompletion()
 }
 
 //==============================================================================
 // convenience extensions
 //
 public extension StorageBuffer {
+    /// the name used to identify the tensor in diagnostic messages
     @inlinable var diagnosticName: String { "\(name)(\(id))" }
+    /// used for unit tests. `true` if a read/write operation caused
+    /// memory to be copied between devices
+    @inlinable var testLastAccessCopiedDeviceMemory: Bool { false }
     
     //--------------------------------------------------------------------------
-    /// `init(type:count:layout:
+    /// `init(type:count:order:
     /// creates an uninitialized lazily allocated buffer to hold `count`
     /// number of tensor `Element`s
     /// - Parameters:
     ///  - type: the type of tensor `Element`
     ///    This is used to compute buffer byte size and alignment.
     ///  - count: the number of `Element`s stored in the buffer.
-    ///  - layout: element memory layout order
     ///  - name: the name of the tensor
     @inlinable init<Element: StorageElement>(
         type: Element.Type,
         count: Int,
-        name: String = "Tensor"
+        name: String
     ) {
         self.init(storedType: Element.Stored.self,
                   count: Element.storedCount(count),
@@ -163,78 +191,11 @@ public extension StorageBuffer {
                "Buffer size is not even multiple of Element type")
         return byteCount / MemoryLayout<Element>.size
     }
-
-    //--------------------------------------------------------------------------
-    /// `element(type:at:`
-    /// - Parameters:
-    ///  - type: the type of tensor `Element` (e.g. Float, UInt8, etc..)
-    ///  - index: the absolute logical linear storage index of the element
-    /// - Returns: a single element at the specified offset
-    @inlinable func element<E: StorageElement>(
-        type: E.Type,
-        at index: Int
-    ) -> E.Value {
-        let i = E.storedIndex(index)
-        let buffer = read(type: E.Stored.self, at: i, count: 1)
-        return E.value(at: index, from: buffer[0])
-    }
     
     //--------------------------------------------------------------------------
-    /// `setElement(type:value:offset:`
-    /// - Parameters:
-    ///  - type: the type of tensor `Element` (e.g. Float, UInt8, etc..)
-    ///  - value: the value to set
-    ///  - index: the absolute logical linear storage index of the element
-    @inlinable func setElement<E: StorageElement>(
-        type: E.Type,
-        value: E.Value,
-        at index: Int
-    ) {
-        let i = E.storedIndex(index)
-        let mutableBuffer = readWrite(type: E.Stored.self, at: i, count: 1)
-        E.store(value: value, at: index, to: &mutableBuffer[0])
-    }
-    
-    //--------------------------------------------------------------------------
-    /// `read(type:index:count:`
-    /// gets a buffer pointer blocking the calling thread until synchronized
-    /// - Parameters:
-    ///  - type: the type of storage element
-    ///  - base: the base storage index of the returned buffer
-    ///  - count: the number of elements to be accessed
-    /// - Returns: a buffer pointer to the elements. Elements will be valid
-    ///   when the queue reaches this point
-    @inlinable func read<Element>(
-        type: Element.Type,
-        at base: Int,
-        count: Int
-    ) -> UnsafeBufferPointer<Element> {
-        let queue = Context.cpuQueue(0)
-        let buffer = read(type: type, at: base, count: count, using: queue)
-        queue.waitUntilQueueIsComplete()
-        return buffer
-    }
-    
-    //--------------------------------------------------------------------------
-    /// `readWrite(type:index:count`
-    /// gets a mutable buffer pointer blocking the calling thread
-    /// until synchronized
-    /// - Parameters:
-    ///  - type: the type of storage element
-    ///  - base: the base storage index of the returned buffer
-    ///  - count: the number of elements to be accessed
-    /// - Returns: a mutable buffer pointer to the elements.
-    ///   Elements will be valid when the queue reaches this point
-    @inlinable func readWrite<Element>(
-        type: Element.Type,
-        at base: Int,
-        count: Int
-    ) -> UnsafeMutableBufferPointer<Element> {
-        let queue = Context.cpuQueue(0)
-        let buffer = readWrite(type: type, at: base, count: count, using: queue)
-        queue.waitUntilQueueIsComplete()
-        return buffer
-    }
+    /// waitForCompletion
+    /// blocks the caller until pending write operations have completed
+    @inlinable func waitForCompletion() { }
 }
 
 //==============================================================================

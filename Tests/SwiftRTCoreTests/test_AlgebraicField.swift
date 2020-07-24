@@ -22,74 +22,118 @@ class test_AlgebraicField: XCTestCase {
     //--------------------------------------------------------------------------
     // support terminal test run
     static var allTests = [
+        // ("test_queryMatmulProperties", test_queryMatmulProperties),
+        // ("test_minimalAdd", test_minimalAdd),
+        // ("test_minimalAddVJP", test_minimalAddVJP),
+
+        // ("test_matmul", test_matmul),
+        // ("test_batchMatmul", test_batchMatmul),
+        // ("test_leftBatchMatmul", test_leftBatchMatmul),
+        // ("test_rightBatchMatmul", test_rightBatchMatmul),
+
         ("test_add", test_add),
+        // ("test_addInt32", test_addInt32),
+        // ("test_addUInt8", test_addUInt8),
+        // ("test_addScalar", test_addScalar),
+        // ("test_addAndAssign", test_addAndAssign),
+        // ("test_addSubMulDivComplex", test_addSubMulDivComplex),
 
-        ("test_matmul", test_matmul),
-        ("test_batchMatmul", test_batchMatmul),
-        ("test_leftBatchMatmul", test_leftBatchMatmul),
-        ("test_rightBatchMatmul", test_rightBatchMatmul),
+        // ("test_subtract", test_subtract),
+        // ("test_subtractScalar", test_subtractScalar),
+        // ("test_subtractVector", test_subtractVector),
+        // ("test_subtractAndAssign", test_subtractAndAssign),
 
-        ("test_addInt32", test_addInt32),
-        ("test_addUInt8", test_addUInt8),
-        ("test_addScalar", test_addScalar),
-        ("test_addAndAssign", test_addAndAssign),
-        ("test_addSubMulDivComplex", test_addSubMulDivComplex),
+        // ("test_mul", test_mul),
+        // ("test_mulScalar", test_mulScalar),
+        // ("test_mulAndAssign", test_mulAndAssign),
 
-        ("test_subtract", test_subtract),
-        ("test_subtractScalar", test_subtractScalar),
-        ("test_subtractVector", test_subtractVector),
-        ("test_subtractAndAssign", test_subtractAndAssign),
-
-        ("test_mul", test_mul),
-        ("test_mulScalar", test_mulScalar),
-        ("test_mulAndAssign", test_mulAndAssign),
-
-        ("test_div", test_div),
-        ("test_divScalar", test_divScalar),
-        ("test_divAndAssign", test_divAndAssign),
+        // ("test_div", test_div),
+        // ("test_divScalar", test_divScalar),
+        // ("test_divAndAssign", test_divAndAssign),
     ]
-    
+
     //--------------------------------------------------------------------------
-    func test_add() {
+    func test_queryMatmulProperties() {
         Context.log.level = .diagnostic
-        Context.cpuQueueMode = .async
+        do {
+            let a = array(0..<6, (3, 2), type: Float16.self)
+            print(a)
+            let b = array(0..<8, (2, 4), type: Float16.self)
+            print(b)
+            var c = empty((3, 4), type: Float16.self)
+            let preferences = MatmulPreferences()
+            print(preferences)            
+            
+            let props = MatmulAlgorithm.query(
+                a, b, &c, 
+                accumulatorType: .accumulator16F,
+                scaleType: .real16F,
+                preferences: preferences,
+                using: Context.currentQueue)
+            print(props)
+        }
+
+        // do {
+        //     let a = ones((32, 2))
+        //     let b = ones((2, 64))
+        //     var c = empty((32, 64))
+        //     let props = queryMatmulProperties(a, false, b, false, &c)
+        //     print(props)
+        // }
+
+        // do {
+        //     let a = ones((512, 768))
+        //     let b = ones((768, 96))
+        //     var c = empty((512, 96))
+        //     let props = queryMatmulProperties(a, false, b, false, &c)
+        //     print(props)
+        // }
+
+        // do {
+        //     let a = ones((1024, 1024))
+        //     let b = ones((1024, 1024))
+        //     var c = empty((1024, 1024))
+        //     let props = queryMatmulProperties(a, false, b, false, &c)
+        //     print(props)
+        // }
+    }
+
+    //--------------------------------------------------------------------------
+    func test_minimalAdd() {
+        // Context.log.level = .diagnostic
+        let a = array([[0, 1], [2, 3], [4, 5]], name: "a")
+        let b = a + 2
+        XCTAssert(b == [[2, 3], [4, 5], [6, 7]])
+    }
+
+    //--------------------------------------------------------------------------
+    func test_minimalAddVJP() {
+        // Context.log.level = .diagnostic
+        let a = array([[0, 1], [2, 3], [4, 5]], name: "a")
+        let v = ones(like: a, name: "ones")
         
-        let a = array([[0, 1], [2, 3], [4, 5]])
-        let b = array([[0, 1], [2, 3], [4, 5]])
-        let result = a + b
-        XCTAssert(result == [[0, 2], [4, 6], [8, 10]])
-        
-        // both
-        let (g1, g2) = pullback(at: a, b, in: { $0 + $1 })(ones(like: a))
-        
-        XCTAssert(g1.flatArray == [1, 1, 1, 1, 1, 1])
-        XCTAssert(g2.flatArray == [1, 1, 1, 1, 1, 1])
-        
-        // lhs
-        let glhs = pullback(at: a, in: { $0 + 2 })(ones(like: a))
-        XCTAssert(glhs.flatArray == [1, 1, 1, 1, 1, 1])
-        
-        // rhs
-        let grhs = pullback(at: a, in: { 2 + $0 })(ones(like: a))
-        XCTAssert(grhs.flatArray == [1, 1, 1, 1, 1, 1])
+        // only wrt lhs
+        let g = pullback(at: a, in: { $0 + 2 })(v)
+        XCTAssert(g == [[1, 1], [1, 1], [1, 1]])
     }
 
     //--------------------------------------------------------------------------
     func test_matmul() {
-        let a = array([0.0, 1, 2, 3, 4, 5], (3, 2))
-        let b = array([0.0, 1, 2, 3, 4, 5, 6, 7], (2, 4))
+        Context.log.level = .diagnostic
+        let a = array([0, 1, 2, 3, 4, 5], (3, 2))
+        let b = array([0, 1, 2, 3, 4, 5, 6, 7], (2, 4))
         let c = matmul(a, b)
         XCTAssert(c == [[ 4,  5,  6,  7],
                         [12, 17, 22, 27],
                         [20, 29, 38, 47]])
         
-        let (g0, g1) = pullback(at: a, b, in: { matmul($0, $1) } )(ones(like: c))
-        XCTAssert(g0 == [[ 6.0, 22.0],
-                         [ 6.0, 22.0],
-                         [ 6.0, 22.0]])
+        // let (g0, g1) = pullback(at: a, b, in: { matmul($0, $1) } )(ones(like: c))
+        // XCTAssert(g0 == [[ 6, 22],
+        //                  [ 6, 22],
+        //                  [ 6, 22]])
         
-        XCTAssert(g1 == [[6.0, 6.0, 6.0, 6.0],
-                         [9.0, 9.0, 9.0, 9.0]])
+        // XCTAssert(g1 == [[6, 6, 6, 6],
+        //                  [9, 9, 9, 9]])
     }
     
     //--------------------------------------------------------------------------
@@ -169,6 +213,30 @@ class test_AlgebraicField: XCTestCase {
     }
 
     //--------------------------------------------------------------------------
+    func test_add() {
+        Context.log.level = .diagnostic
+        let a = array([[0, 1], [2, 3], [4, 5]])
+        let b = array([[0, 1], [2, 3], [4, 5]])
+        let result = a + b
+        print(result)
+        XCTAssert(result == [[0, 2], [4, 6], [8, 10]])
+        
+        // both
+        let (g1, g2) = pullback(at: a, b, in: { $0 + $1 })(ones(like: a))
+        
+        XCTAssert(g1.flatArray == [1, 1, 1, 1, 1, 1])
+        XCTAssert(g2.flatArray == [1, 1, 1, 1, 1, 1])
+        
+        // lhs
+        let glhs = pullback(at: a, in: { $0 + 2 })(ones(like: a))
+        XCTAssert(glhs.flatArray == [1, 1, 1, 1, 1, 1])
+        
+        // rhs
+        let grhs = pullback(at: a, in: { 2 + $0 })(ones(like: a))
+        XCTAssert(grhs.flatArray == [1, 1, 1, 1, 1, 1])
+    }
+
+    //--------------------------------------------------------------------------
     func test_addInt32() {
         let a = array(0..<6, (3, 2), type: Int32.self)
         let b = array(0..<6, (3, 2), type: Int32.self)
@@ -201,7 +269,7 @@ class test_AlgebraicField: XCTestCase {
         a += 2
         XCTAssert(a == [[2, 3], [4, 5], [6, 7]])
     }
-
+    
     //--------------------------------------------------------------------------
     func test_addSubMulDivComplex() {
         typealias CF = Complex<Float>
@@ -276,11 +344,11 @@ class test_AlgebraicField: XCTestCase {
         let (g1, g2) = pullback(at: a, b, in: { $0 - $1 })(ones(like: a))
         XCTAssert(g1.flatArray == [1, 1, 1, 1, 1, 1])
         XCTAssert(g2.flatArray == [-1, -1, -1, -1, -1, -1])
-        
+
         // lhs
         let glhs = pullback(at: a, in: { $0 - 2 })(ones(like: a))
         XCTAssert(glhs.flatArray == [1, 1, 1, 1, 1, 1])
-        
+
         // rhs
         let grhs = pullback(at: a, in: { 2 - $0 })(ones(like: a))
         XCTAssert(grhs.flatArray == [-1, -1, -1, -1, -1, -1])

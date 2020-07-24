@@ -84,6 +84,34 @@ public protocol StorageElement {
     /// - Parameters:
     ///  - value: the element value to store
     static func stored(value: Value) -> Stored
+    
+    //--------------------------------------------------------------------------
+    /// `getValue(from:at:`
+    /// - Parameters:
+    ///  - buffer: the storage buffer
+    ///  - index: the absolute logical storage index of the element in `buffer`
+    ///  This is the unpacked logical index, which will be greater than
+    ///  `buffer.count` for packed element types.
+    /// - Returns: the element value at the specified index
+    static func getValue(
+        from buffer: UnsafeBufferPointer<Stored>,
+        at index: Int
+    ) -> Value
+
+    //--------------------------------------------------------------------------
+    /// `setValue(value:in:at:`
+    /// - Parameters:
+    ///  - value: the value to set
+    ///  - buffer: the storage buffer
+    ///  - index: the absolute logical storage index of the element in `buffer`
+    ///  This is the unpacked logical index, which will be greater than
+    ///  `buffer.count` for packed element types.
+    /// - Returns: the element value at the specified index
+    static func set(
+        value: Value,
+        in buffer: UnsafeMutableBufferPointer<Stored>,
+        at index: Int
+    )
 }
 
 //==============================================================================
@@ -110,6 +138,21 @@ public extension StorageElement where Stored == Value {
         at index: Int,
         to stored: inout Stored
     ) { stored = value }
+    
+    @inlinable static func getValue(
+        from buffer: UnsafeBufferPointer<Stored>,
+        at index: Int
+    ) -> Value {
+        buffer[index]
+    }
+
+    @inlinable static func set(
+        value: Value,
+        in buffer: UnsafeMutableBufferPointer<Stored>,
+        at index: Int
+    ) {
+        buffer[index] = value
+    }
 }
 
 //==============================================================================
@@ -156,6 +199,22 @@ public extension PackedStorageElement {
         let storedStart = storedIndex(start)
         let storedCount = storedIndex(start + count - 1) - storedStart + 1
         return (storedStart, storedCount)
+    }
+    
+    
+    @inlinable static func getValue(
+        from buffer: UnsafeBufferPointer<Stored>,
+        at index: Int
+    ) -> Value {
+        value(at: index, from: buffer[storedIndex(index)])
+    }
+    
+    @inlinable static func set(
+        value: Value,
+        in buffer: UnsafeMutableBufferPointer<Stored>,
+        at index: Int
+    ) {
+        store(value: value, at: index, to: &buffer[storedIndex(index)])
     }
 }
 
@@ -228,7 +287,7 @@ extension Tensor where TensorElement == Bool1 {
         strides = other.strides
         storage = other.storage
         storageBase = other.storageBase
-        layout = other.layout
+        order = other.order
         isShared = other.isShared
         count = other.count
         stridedSpanCount = other.stridedSpanCount
@@ -238,7 +297,7 @@ extension Tensor where TensorElement == Bool1 {
                                           strides,
                                           storage,
                                           storageBase,
-                                          layout,
+                                          order,
                                           stridedSpanCount)
     }
 }
@@ -261,7 +320,7 @@ extension Tensor where TensorElement == UInt1 {
         strides = other.strides
         storage = other.storage
         storageBase = other.storageBase
-        layout = other.layout
+        order = other.order
         isShared = other.isShared
         count = other.count
         stridedSpanCount = other.stridedSpanCount
@@ -271,7 +330,7 @@ extension Tensor where TensorElement == UInt1 {
                                           strides,
                                           storage,
                                           storageBase,
-                                          layout,
+                                          order,
                                           stridedSpanCount)
     }
 }
@@ -307,6 +366,21 @@ extension Float16: StorageElement {
 
     @inlinable public static func storedRange(start: Int, count: Int)
     -> (storedStart: Int, storedCount: Int) { (start, count) }
+    
+    @inlinable public static func getValue(
+        from buffer: UnsafeBufferPointer<Float16>,
+        at index: Int
+    ) -> Float {
+        Float(buffer[index])
+    }
+    
+    @inlinable public static func set(
+        value: Float,
+        in buffer: UnsafeMutableBufferPointer<Float16>,
+        at index: Int
+    ) {
+        buffer[index] = Float16(value)
+    }
 }
 
 //==============================================================================
@@ -384,11 +458,11 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
     /// - Parameters:
     ///  - tensor: the tensor that will be read
     @inlinable public init(tensor: Tensor<Shape, TensorElement>) {
-        assert(tensor.isBufferIterable, "tensor layout is not buffer iterable")
+        assert(tensor.isBufferIterable, "tensor order is not buffer iterable")
 
         // make the data range available for reading by the cpu
         isSingleElement = tensor.isSingleElement
-        let buffer = tensor.read()
+        let buffer = tensor.read(using: Context.currentQueue)
         
         // Init members and note that this does not actually mutate, even
         // though we commonly hold a mutable buffer pointer
@@ -410,14 +484,14 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
     /// - Parameters:
     ///  - tensor: the tensor that will be written
     @inlinable public init(tensor: inout Tensor<Shape, TensorElement>) {
-        assert(tensor.isBufferIterable, "tensor layout is not buffer iterable")
+        assert(tensor.isBufferIterable, "tensor order is not buffer iterable")
 
         // convert logical base and strided span count to stored.
         // They will not be equal for packed element types like `Int4`
         isSingleElement = tensor.isSingleElement
 
         // make the data range available for reading/writing by the cpu
-        hostBuffer = tensor.readWrite()
+        hostBuffer = tensor.readWrite(using: Context.currentQueue)
         
         // `startIndex` is the logical position of the first
         // `Value` type within the `Stored` type.
@@ -459,7 +533,7 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
 //==============================================================================
 /// LogicalElements
 /// a class that maps `ElementIndex`s to storage values via the current
-/// dynamic layout.
+/// dynamic order.
 public final class LogicalElements<Shape, TensorElement>: MutableCollection
 where Shape: TensorShape, TensorElement: StorageElement
 {
@@ -471,7 +545,7 @@ where Shape: TensorShape, TensorElement: StorageElement
     public let storedBase: Int
     public let storedCount: Int
     public let strides: Shape
-    public let layout: Layout
+    public let order: Order
     public let startIndex: Index
     public let endIndex: Index
 
@@ -487,7 +561,7 @@ where Shape: TensorShape, TensorElement: StorageElement
                   tensor.strides,
                   tensor.storage,
                   tensor.storageBase,
-                  tensor.layout,
+                  tensor.order,
                   tensor.stridedSpanCount)
     }
     
@@ -495,7 +569,7 @@ where Shape: TensorShape, TensorElement: StorageElement
     /// init
     /// This initializer is called by `Tensor` initializers to setup for
     /// possible direct element indexing by the user. The host buffer is
-    /// set to `nil` and requires that `synchronizeForReadWrite` be called
+    /// set to `nil` and requires that `prepareForReadWrite` be called
     /// before any access to storage.
     /// `Tensor.startIndex` and `Tensor.makeIndex` call this function each
     /// time to transparently sync for the user.
@@ -505,14 +579,14 @@ where Shape: TensorShape, TensorElement: StorageElement
         _ strides: Shape,
         _ storage: StorageBufferType,
         _ storageBase: Int,
-        _ layout: Layout,
+        _ order: Order,
         _ stridedSpanCount: Int
     ) {
         assert(shape.elementCount() == count, "shape count mismatch")
         self.alignment = TensorElement.alignment(storageBase)
         self.strides = strides
         self.storage = storage
-        self.layout = layout
+        self.order = order
         let (storedBase, storedCount) =
                 TensorElement.storedRange(start: storageBase,
                                           count: stridedSpanCount)
@@ -524,130 +598,24 @@ where Shape: TensorShape, TensorElement: StorageElement
     }
     
     //--------------------------------------------------------------------------
-    // synchronizeForRead
-    @inlinable public func synchronizeForRead() {
+    // prepareForRead
+    @inlinable public func prepareForRead() {
         let buff = storage.read(type: TensorElement.Stored.self,
-                                at: storedBase, count: storedCount)
+                                at: storedBase,
+                                count: storedCount,
+                                using: Context.currentQueue)
         // this never actually mutates
         let p = UnsafeMutablePointer(mutating: buff.baseAddress)
         hostBuffer = UnsafeMutableBufferPointer(start: p, count: buff.count)
     }
     
     //--------------------------------------------------------------------------
-    // synchronizeForReadWrite
-    @inlinable public func synchronizeForReadWrite() {
+    // prepareForReadWrite
+    @inlinable public func prepareForReadWrite() {
         hostBuffer = storage.readWrite(type: TensorElement.Stored.self,
-                                       at: storedBase, count: storedCount)
-    }
-    
-    //--------------------------------------------------------------------------
-    // index(after:
-    @inlinable public func index(after i: Index) -> Index {
-        switch layout {
-        case .row, .col:
-            return i.incremented(between: startIndex, and: endIndex)
-        }
-    }
-    
-    //--------------------------------------------------------------------------
-    // subscript
-    @inlinable public subscript(position: Index) -> TensorElement.Value {
-        get {
-            switch layout {
-            case .row, .col:
-                // get logical strided linear element position
-                let i = position.linearIndex(strides) + alignment
-                
-                // convert to stored index which might be less for packed elements
-                let si = TensorElement.storedIndex(i)
-                return TensorElement.value(at: i, from: hostBuffer[si])
-            }
-        }
-        
-        set {
-            switch layout {
-            case .row, .col:
-                // get logical strided linear element position
-                let i = position.linearIndex(strides) + alignment
-                
-                // convert to stored index which might be less for packed elements
-                let si = TensorElement.storedIndex(i)
-                TensorElement.store(value: newValue, at: i, to: &hostBuffer[si])
-            }
-        }
-    }
-}
-
-//==============================================================================
-/// StridedElements
-/// Iterates storage elements using logical index coordinates and strides
-public struct StridedElements<Shape, TensorElement>: MutableCollection
-where Shape: TensorShape, TensorElement: StorageElement
-{
-    // properties
-    public typealias Index = ElementIndex<Shape>
-    public let alignment: Int
-    public let hostBuffer: UnsafeMutableBufferPointer<TensorElement.Stored>
-    public let strides: Shape
-    public let startIndex: Index
-    public let endIndex: Index
-    
-    //--------------------------------------------------------------------------
-    /// init(tensor:
-    /// creates a storage buffer iterator for reading tensor elments
-    ///
-    /// - Parameters:
-    ///  - tensor: the tensor that will be read
-    @inlinable public init(tensor: Tensor<Shape, TensorElement>) {
-        let buff = tensor.read()
-        let p = UnsafeMutablePointer(mutating: buff.baseAddress)
-        hostBuffer = UnsafeMutableBufferPointer(start: p, count: buff.count)
-        alignment = TensorElement.alignment(tensor.storageBase)
-        strides = tensor.strides
-        startIndex = Index(Shape.zero, 0)
-        endIndex = Index(tensor.shape, tensor.count)
-    }
-    
-    //--------------------------------------------------------------------------
-    /// init(mutating:
-    /// creates a storage buffer iterator for reading/writing tensor elments
-    ///
-    /// - Parameters:
-    ///  - tensor: the tensor that will be written
-    @inlinable public init(tensor: inout Tensor<Shape, TensorElement>) {
-        hostBuffer = tensor.readWrite()
-        alignment = TensorElement.alignment(tensor.storageBase)
-        strides = tensor.strides
-        startIndex = Index(Shape.zero, 0)
-        endIndex = Index(tensor.shape, tensor.count)
-    }
-    
-    //--------------------------------------------------------------------------
-    /// init(mutating:strides:
-    /// creates a storage buffer iterator for reading/writing tensor elments
-    ///
-    /// - Parameters:
-    ///  - tensor: the tensor that will be written
-    @inlinable public init(
-        mutating tensor: Tensor<Shape, TensorElement>,
-        _ shape: Shape,
-        _ strides: Shape
-    ) {
-        // override for reduction projection
-        self.strides = strides
-        
-        // convert logical base and strided span count to stored.
-        // They will not be equal for packed element types like `Int4`
-        let (storedBase, storedCount) = TensorElement
-                .storedRange(start: tensor.storageBase,
-                             count: tensor.stridedSpanCount)
-        
-        // make the data range available for reading/writing by the cpu
-        hostBuffer = tensor.storage.readWrite(type: TensorElement.Stored.self,
-                                              at: storedBase, count: storedCount)
-        alignment = TensorElement.alignment(tensor.storageBase)
-        startIndex = Index(Shape.zero, 0)
-        endIndex = Index(shape, shape.elementCount())
+                                       at: storedBase,
+                                       count: storedCount,
+                                       using: Context.currentQueue)
     }
     
     //--------------------------------------------------------------------------
@@ -660,21 +628,45 @@ where Shape: TensorShape, TensorElement: StorageElement
     // subscript
     @inlinable public subscript(position: Index) -> TensorElement.Value {
         get {
-            // get logical strided linear element position
-            let i = position.linearIndex(strides) + alignment
-            
-            // convert to stored index which might be less for packed elements
-            let si = TensorElement.storedIndex(i)
-            return TensorElement.value(at: i, from: hostBuffer[si])
+            switch order {
+            case .row, .col:
+                // get logical strided linear element position
+                let i = position.linearIndex(strides) + alignment
+                
+                // convert to stored index which might be less for packed elements
+                let si = TensorElement.storedIndex(i)
+                return TensorElement.value(at: i, from: hostBuffer[si])
+                
+            case .colTiled32:
+                fatalError("not implemented yet")
+                
+            case .colTiledTC32x8:
+                fatalError("not implemented yet")
+                
+            case .colTiledTC32x32:
+                fatalError("not implemented yet")
+            }
         }
         
         set {
-            // get logical strided linear element position
-            let i = position.linearIndex(strides) + alignment
-            
-            // convert to stored index which might be less for packed elements
-            let si = TensorElement.storedIndex(i)
-            TensorElement.store(value: newValue, at: i, to: &hostBuffer[si])
+            switch order {
+            case .row, .col:
+                // get logical strided linear element position
+                let i = position.linearIndex(strides) + alignment
+                
+                // convert to stored index which might be less for packed elements
+                let si = TensorElement.storedIndex(i)
+                TensorElement.store(value: newValue, at: i, to: &hostBuffer[si])
+                
+            case .colTiled32:
+                fatalError("not implemented yet")
+                
+            case .colTiledTC32x8:
+                fatalError("not implemented yet")
+                
+            case .colTiledTC32x32:
+                fatalError("not implemented yet")
+            }
         }
     }
 }

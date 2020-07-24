@@ -29,6 +29,7 @@ extension DeviceQueue {
     //==========================================================================
     // generator
     @inlinable func mapOp<S,E>(
+        _ opName: String,
         _ r: inout Tensor<S,E>,
         _ op: @escaping () -> E.Value
     ) {
@@ -39,7 +40,9 @@ extension DeviceQueue {
         ) {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     out.indices.forEach { out[$0] = op() }
                 }
             } else {
@@ -58,6 +61,7 @@ extension DeviceQueue {
     //==========================================================================
     // range
     @inlinable func mapOp<S,E,C>(
+        _ opName: String,
         _ elements: C,
         _ r: inout Tensor<S,E>
     ) where C: Collection, C.Element == E.Value {
@@ -68,7 +72,9 @@ extension DeviceQueue {
         ) where I0.Element == O.Element {
             var out = out
             if mode == .async {
-                queue.async {
+                queue.async(group: group) {
+                    diagnostic("\(queueString) \(opName) on \(name)",
+                               categories: .queueFunc)
                     zip(out.indices, i0).forEach { out[$0] = $1 }
                 }
             } else {
@@ -87,6 +93,7 @@ extension DeviceQueue {
     //==========================================================================
     // inplace
     @inlinable func mapOp<S,E>(
+        _ opName: String,
         _ r: inout Tensor<S,E>,
         _ op: @escaping (E.Value) -> E.Value
     ) {
@@ -97,7 +104,9 @@ extension DeviceQueue {
         ) {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     out.indices.forEach { out[$0] = op(out[$0]) }
                 }
             } else {
@@ -116,11 +125,12 @@ extension DeviceQueue {
     //==========================================================================
     // reduction
     @inlinable func mapOp<S,E,RE>(
+        _ opName: String,
         _ a: Tensor<S,E>,
         _ r: inout Tensor<S,RE>,
         _ op: @escaping (RE.Value, E.Value) -> RE.Value
     ) {
-        precondition(a.layout == r.layout)
+        precondition(a.order == r.order)
         // the op
         func execute<I0: Collection, O: MutableCollection>(
             _ i0: I0, _ out: O,
@@ -128,15 +138,13 @@ extension DeviceQueue {
         ) {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, i0).forEach { out[$0] = op(out[$0], $1) }
                 }
             } else {
-                zip(out.indices, i0).forEach { i, v in
-                    let currentValue = out[i]
-                    let sum = op(currentValue, v)
-                    out[i] = sum
-                }
+                zip(out.indices, i0).forEach { out[$0] = op(out[$0], $1) }
             }
         }
         
@@ -147,11 +155,11 @@ extension DeviceQueue {
                 repeatedStrides(matching: r, to: a.shape),
                 r.storage,
                 r.storageBase,
-                r.layout,
+                r.order,
                 r.stridedSpanCount)
         
-        rMutableElements.synchronizeForReadWrite()
-
+        rMutableElements.prepareForReadWrite()
+        
         if a.isBufferIterable {
             execute(a.buffer, rMutableElements, op)
         } else {
@@ -162,6 +170,7 @@ extension DeviceQueue {
     //==========================================================================
     // mapOp 1
     @inlinable func mapOp<S,E,RE>(
+        _ opName: String,
         _ a: Tensor<S,E>,
         _ r: inout Tensor<S,RE>,
         _ op: @escaping (E.Value) -> RE.Value
@@ -173,7 +182,9 @@ extension DeviceQueue {
         ) {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, i0).forEach { out[$0] = op($1) }
                 }
             } else {
@@ -181,8 +192,8 @@ extension DeviceQueue {
             }
         }
 
-        // check layouts because they will not match for layout conversion ops
-        if a.layout == r.layout {
+        // check layouts because they will not match for order conversion ops
+        if a.order == r.order {
             if a.isBufferIterable {
                 if r.isBufferIterable {
                     execute(a.buffer, r.mutableBuffer, op)
@@ -203,14 +214,14 @@ extension DeviceQueue {
     
     //==========================================================================
     // mapOp 2
-    // TODO: specialize for + - * / to gain 10% perf boost
     @inlinable func mapOp<S,E,RE>(
+        _ opName: String,
         _ a: Tensor<S,E>,
         _ b: Tensor<S,E>,
         _ r: inout Tensor<S,RE>,
         _ op: @escaping (E.Value, E.Value) -> RE.Value
     ) {
-        precondition(a.layout == b.layout && a.layout == r.layout,
+        precondition(a.order == b.order && a.order == r.order,
                      _messageLayoutsMustMatch)
         // the op
         func execute<I0: Collection, I1: Collection, O: MutableCollection>(
@@ -219,7 +230,9 @@ extension DeviceQueue {
         ) {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, zip(i0, i1)).forEach {
                         out[$0] = op($1.0, $1.1)
                     }
@@ -271,7 +284,7 @@ extension DeviceQueue {
         _ b: Tensor<S,E>,
         _ r: inout Tensor<S,E>
     ) where E.Value: AdditiveArithmetic {
-        precondition(a.layout == b.layout && a.layout == r.layout,
+        precondition(a.order == b.order && a.order == r.order,
                      _messageLayoutsMustMatch)
 
         // the op
@@ -282,10 +295,9 @@ extension DeviceQueue {
         {
             var out = out
             if mode == .async {
-                diagnostic("\(functionString) queuing \(opName) on" +
-                            " \(deviceName)_\(name)",
+                diagnostic("\(queueString) \(opName) on \(name)",
                            categories: .queueFunc)
-                queue.async {
+                queue.async(group: group) {
                     zip(out.indices, zip(i0, i1)).forEach {
                         out[$0] = $1.0 + $1.1
                     }
@@ -332,11 +344,12 @@ extension DeviceQueue {
     // mapOpSub
     // 20% boost over passed in op
     @inlinable func mapOpSub<S,E>(
+        _ opName: String,
         _ a: Tensor<S,E>,
         _ b: Tensor<S,E>,
         _ r: inout Tensor<S,E>
     ) where E.Value: AdditiveArithmetic {
-        precondition(a.layout == b.layout && a.layout == r.layout)
+        precondition(a.order == b.order && a.order == r.order)
         // the op
         func execute<I0: Collection, I1: Collection, O: MutableCollection>(
             _ i0: I0, _ i1: I1, _ out: O
@@ -345,7 +358,9 @@ extension DeviceQueue {
         {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, zip(i0, i1)).forEach {
                         out[$0] = $1.0 - $1.1
                     }
@@ -392,11 +407,12 @@ extension DeviceQueue {
     // mapOpMul
     // 20% boost over passed in op
     @inlinable func mapOpMul<S,E>(
+        _ opName: String,
         _ a: Tensor<S,E>,
         _ b: Tensor<S,E>,
         _ r: inout Tensor<S,E>
     ) where E.Value: Numeric {
-        precondition(a.layout == b.layout && a.layout == r.layout)
+        precondition(a.order == b.order && a.order == r.order)
         // the op
         func execute<I0: Collection, I1: Collection, O: MutableCollection>(
             _ i0: I0, _ i1: I1, _ out: O
@@ -405,7 +421,9 @@ extension DeviceQueue {
         {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, zip(i0, i1)).forEach {
                         out[$0] = $1.0 * $1.1
                     }
@@ -452,11 +470,12 @@ extension DeviceQueue {
     // mapOpDiv
     // 20% boost over passed in op
     @inlinable func mapOpDiv<S,E>(
+        _ opName: String,
         _ a: Tensor<S,E>,
         _ b: Tensor<S,E>,
         _ r: inout Tensor<S,E>
     ) where E.Value: AlgebraicField {
-        precondition(a.layout == b.layout && a.layout == r.layout)
+        precondition(a.order == b.order && a.order == r.order)
         // the op
         func execute<I0: Collection, I1: Collection, O: MutableCollection>(
             _ i0: I0, _ i1: I1, _ out: O
@@ -465,7 +484,9 @@ extension DeviceQueue {
         {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, zip(i0, i1)).forEach {
                         out[$0] = $1.0 / $1.1
                     }
@@ -511,14 +532,15 @@ extension DeviceQueue {
     //==========================================================================
     // mapOp 3
     @inlinable func mapOp<S,E0, E1, E2, R1>(
+        _ opName: String,
         _ a: Tensor<S,E0>,
         _ b: Tensor<S,E1>,
         _ c: Tensor<S,E2>,
         _ r: inout Tensor<S,R1>,
         _ op: @escaping (E0.Value, E1.Value, E2.Value) -> R1.Value
     ) {
-        precondition(a.layout == b.layout && a.layout == c.layout &&
-                     a.layout == r.layout)
+        precondition(a.order == b.order && a.order == c.order &&
+                     a.order == r.order)
         // the op
         func execute<
             I0: Collection,
@@ -531,7 +553,9 @@ extension DeviceQueue {
         ) {
             var out = out
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(out.indices, zip(i0, zip(i1, i2))).forEach {
                         out[$0] = op($1.0, $1.1.0, $1.1.1)
                     }
@@ -609,6 +633,7 @@ extension DeviceQueue {
     //==========================================================================
     // mapOp 3
     @inlinable func mapOp<S,E0, E1, E2, R1, R2>(
+        _ opName: String,
         _ a: Tensor<S,E0>,
         _ b: Tensor<S,E1>,
         _ c: Tensor<S,E2>,
@@ -633,7 +658,9 @@ extension DeviceQueue {
         ) {
             var o1 = o1, o2 = o2
             if mode == .async {
-                queue.async {
+                diagnostic("\(queueString) \(opName) on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
                     zip(zip(o1.indices, o2.indices), zip(i0, zip(i1, i2))).forEach
                     {
                         let (o1v, o2v) = op2($1.0, $1.1.0, $1.1.1)
@@ -650,7 +677,7 @@ extension DeviceQueue {
             }
         }
         
-        // execute right layout combination
+        // execute right order combination
         assert(a.isBufferIterable && b.isBufferIterable && c.isBufferIterable &&
                 r1.isBufferIterable && r2.isBufferIterable)
         execute(a.buffer, b.buffer, c.buffer,

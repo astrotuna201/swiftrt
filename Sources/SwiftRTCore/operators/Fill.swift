@@ -125,7 +125,7 @@ where S: TensorShape
         // - This makes `resultTangent` not be inout, so we don't need to set
         //   it any more.
         resultTangent = Tensor(zeros: resultTangent.shape,
-                               layout: resultTangent.layout)
+                               order: resultTangent.order)
 
         return Array.DifferentiableView(tensorTangents)
     }
@@ -140,7 +140,7 @@ where S: TensorShape
 @inlinable public func copy<S,E>(
     from source: Tensor<S,E>,
     to destination: inout Tensor<S,E>
-) where S: TensorShape
+)
 {
     Context.currentQueue.copy(from: source, to: &destination)
 }

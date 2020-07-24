@@ -21,8 +21,8 @@ public protocol TensorShape: SIMD where Scalar == Int {
     // a ranked tuple convenience type used for api parameters
     associatedtype Tuple
     
-    /// conversion to DeviceIndex to support drivers
-    var asDeviceIndex: [DeviceIndex] { get }
+    /// conversion to Int32 to support drivers
+    var asInt32: [Int32] { get }
     /// the number of bounding dimensions
     static var rank: Int { get }
     /// a tuple of ones
@@ -49,7 +49,7 @@ public protocol TensorShape: SIMD where Scalar == Int {
     func incremented(between lower: Self, and upper: Self) -> Self
     
     /// - Returns: srtides for the shape and given storage order
-    func strides(for layout: Layout) -> Self
+    func strides(for order: Order) -> Self
 }
 
 //==============================================================================
@@ -101,12 +101,12 @@ public extension TensorShape {
     }
     
     //--------------------------------------------------------------------------
-    /// conversion to DeviceIndex array to support marshalling to drivers
+    /// conversion to Int32 array to support marshalling to drivers
     @inlinable @_transparent
-    var asDeviceIndex: [DeviceIndex] {
-        var index = [DeviceIndex]()
-        indices.forEach { index.append(DeviceIndex(self[$0])) }
-        return index
+    var asInt32: [Int32] {
+        var values = [Int32]()
+        indices.forEach { values.append(Int32(self[$0])) }
+        return values
     }
 
     //--------------------------------------------------------------------------
@@ -182,9 +182,9 @@ public extension TensorShape {
     }
     
     //--------------------------------------------------------------------------
-    /// `strides(layout:`
+    /// `strides(order:`
     /// computes the strides needed to index the specified storage order
-    @inlinable func strides(for layout: Layout) -> Self {
+    @inlinable func strides(for order: Order) -> Self {
         guard Self.rank > 1 else { return Self.one }
         
         func computeStrides(for shape: Self) -> Self {
@@ -200,7 +200,7 @@ public extension TensorShape {
             return strides
         }
 
-        switch layout {
+        switch order {
         case .row: return computeStrides(for: self)
         case .col:
             var shape = self
@@ -208,6 +208,15 @@ public extension TensorShape {
             var strides = computeStrides(for: shape)
             strides.swapAt(Self.rank - 1, Self.rank - 2)
             return strides
+            
+        case .colTiled32:
+            fatalError("not implemented yet")
+            
+        case .colTiledTC32x8:
+            fatalError("not implemented yet")
+            
+        case .colTiledTC32x32:
+            fatalError("not implemented yet")
         }
     }
 
