@@ -14,9 +14,8 @@
 // limitations under the License.
 //
 import Foundation
-import CCuda
+import SwiftRTCuda
 import Numerics
-//import CudaKernels
 
 //==============================================================================
 /// CudaQueue
@@ -74,10 +73,69 @@ public final class CudaQueue: DeviceQueue, CpuFunctions {
     
     //--------------------------------------------------------------------------
     // select
-    public func selectDevice() {
+    @inlinable public func selectDevice() {
         cudaCheck(cudaSetDevice(Int32(gpuId)))
     }
     
+    //--------------------------------------------------------------------------
+    // allocate
+    // allocate a device memory buffer suitably aligned for any type
+    @inlinable public func allocate(
+        byteCount: Int,
+        heapIndex: Int = 0
+    ) -> DeviceMemory {
+        if usesCpu {
+            let buffer = UnsafeMutableRawBufferPointer
+                    .allocate(byteCount: byteCount,
+                              alignment: MemoryLayout<Int>.alignment)
+            return CpuDeviceMemory(deviceIndex, buffer, memoryType)
+        } else {
+            return CudaDeviceMemory(deviceIndex, byteCount)
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    /// copy
+    @inlinable public func copyAsync(
+        from src: DeviceMemory, 
+        to dst: DeviceMemory
+    ) {
+        assert(src.buffer.count == dst.buffer.count)
+
+        switch (src.type, dst.type) {
+        // host --> host
+        case (.unified, .unified):
+            cpu_copyAsync(from: src, to: dst)
+
+        // host --> discrete
+        case (.unified, .discrete):
+            cudaCheck(cudaMemcpyAsync(
+                dst.mutablePointer,	
+                src.pointer,
+                src.buffer.count,
+                cudaMemcpyHostToDevice, 
+                stream))
+
+        // discrete --> host
+        case (.discrete, .unified):
+            cudaCheck(cudaMemcpyAsync(
+                dst.mutablePointer,	
+                src.pointer,
+                src.buffer.count,
+                cudaMemcpyDeviceToHost, 
+                stream))
+
+        // discrete --> discrete
+        case (.discrete, .discrete):
+            cudaCheck(cudaMemcpyAsync(
+                dst.mutablePointer,	
+                src.pointer,
+                src.buffer.count,
+                cudaMemcpyDeviceToDevice, 
+                stream))
+        }
+    }
+
     //==========================================================================
     /// createActivation
 //    public override func createActivation<T>(

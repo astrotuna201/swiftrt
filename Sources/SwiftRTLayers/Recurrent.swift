@@ -107,7 +107,7 @@ extension RecurrentLayerCell {
 /// A basic RNN cell.
 public struct BasicRNNCell<Element>: RecurrentLayerCell
 where Element: StorageElement,
-      Element.Value: ScalarElement & DifferentiableElement &
+      Element.Value: StorageElement & DifferentiableElement &
         Real & BinaryFloatingPoint
 {
     public var weight: TensorR2<Element>
@@ -164,7 +164,7 @@ where Element: StorageElement,
 /// An LSTM cell.
 public struct LSTMCell<Element>: RecurrentLayerCell
 where Element: StorageElement,
-      Element.Value: ScalarElement & DifferentiableElement &
+      Element.Value: StorageElement & DifferentiableElement &
         Real & BinaryFloatingPoint
 {
     // types
@@ -269,7 +269,7 @@ where Element: StorageElement,
 /// An GRU cell.
 public struct GRUCell<Element>: RecurrentLayerCell
 where Element: StorageElement,
-      Element.Value: ScalarElement & DifferentiableElement &
+      Element.Value: StorageElement & DifferentiableElement &
         Real & BinaryFloatingPoint
 {
     public var updateWeight1, updateWeight2: TensorR2<Element>
@@ -376,9 +376,8 @@ public struct RecurrentLayer<Cell: RecurrentLayerCell>: Layer {
         callAsFunction(inputs, initialState: initialState)
     }
 
-    @usableFromInline
     @derivative(of: callAsFunction, wrt: (self, inputs, initialState))
-    internal func _vjpCallAsFunction(
+    @usableFromInline func _vjpCallAsFunction(
         _ inputs: [Cell.TimeStepInput],
         initialState: Cell.State
     ) -> (
@@ -449,12 +448,12 @@ extension RecurrentLayer: AdditiveArithmetic where Cell: AdditiveArithmetic {}
 
 public typealias BasicRNN<Element> = RecurrentLayer<BasicRNNCell<Element>>
 where Element: StorageElement,
-      Element.Value: ScalarElement & Real & BinaryFloatingPoint & DifferentiableElement
+      Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableElement
 
 public typealias LSTM<Element> = RecurrentLayer<LSTMCell<Element>>
     where Element: StorageElement,
-          Element.Value: ScalarElement & Real & BinaryFloatingPoint & DifferentiableElement
+          Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableElement
 
 public typealias GRU<Element> = RecurrentLayer<GRUCell<Element>>
     where Element: StorageElement,
-          Element.Value: ScalarElement & Real & BinaryFloatingPoint & DifferentiableElement
+          Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableElement

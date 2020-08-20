@@ -13,14 +13,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import CCuda
+import SwiftRTCuda
 
 //==============================================================================
 // DeviceQueue functions with default cpu delegation
 extension CudaQueue 
 {
+    //--------------------------------------------------------------------------
+    // https://docs.nvidia.com/cuda/cublas/index.html#using-the-cublasLt-api
+    // samples: https://github.com/NVIDIA/CUDALibrarySamples/tree/master/cuBLASLt
+    @inlinable func matmul<E>(
+        _ lhs: TensorR2<E>, _ transposeLhs: Bool,
+        _ rhs: TensorR2<E>, _ transposeRhs: Bool,
+        _ result: inout TensorR2<E>
+    ) where E.Value: Numeric {
+        guard useGpu else {
+            cpu_matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
+            return 
+        }
+        
+        cpuFallback(cudaErrorNotSupported) {
+            $0.matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
+        }
+    }
+    //--------------------------------------------------------------------------
+    @inlinable func matmul<E>(
+        _ lhs: TensorR3<E>, _ transposeLhs: Bool,
+        _ rhs: TensorR3<E>, _ transposeRhs: Bool,
+        _ result: inout TensorR3<E>
+    ) where E.Value: Numeric {
+        guard useGpu else {
+            cpu_matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
+            return 
+        }
+
+        cpuFallback(cudaErrorNotSupported) {
+            $0.matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
+        }
+    }
+
     public func matmul2<E>(type: E.Type) -> DeviceMatmul2<E>
-    where E: StorageElement, E.Value: ScalarElement & Numeric {
+    where E: StorageElement, E.Value: StorageElement & Numeric {
         CudaMatmul2<E>(queue: self)
     }
 }
@@ -28,7 +61,7 @@ extension CudaQueue
 //==============================================================================
 /// CudaMatmul2
 public final class CudaMatmul2<E>: DeviceMatmul2<E>
-where E: StorageElement, E.Value: ScalarElement & Numeric
+where E: StorageElement, E.Value: StorageElement & Numeric
 {
     // properties
     public let queue: CudaQueue

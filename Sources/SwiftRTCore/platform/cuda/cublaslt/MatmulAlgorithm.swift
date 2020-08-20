@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import CCuda
+import SwiftRTCuda
 
 //==============================================================================
 /// MatmulAlgorithm
@@ -30,11 +30,11 @@ public final class MatmulAlgorithm: CustomStringConvertible
     @inlinable public init(
         algoId: Int,
         accumulatorType: MatmulAccumulatorType,
-        scaleType: ScalarType,
-        aType: ScalarType,
-        bType: ScalarType,
-        cType: ScalarType,
-        dType: ScalarType,
+        scaleType: StorageElementType,
+        aType: StorageElementType,
+        bType: StorageElementType,
+        cType: StorageElementType,
+        dType: StorageElementType,
         using queue: PlatformType.Device.Queue = Context.currentQueue
     ) {
         assert(cType == dType, "must be equal for now")
@@ -57,11 +57,11 @@ public final class MatmulAlgorithm: CustomStringConvertible
     public static func getIds(
         maxIds: Int,
         accumulatorType: MatmulAccumulatorType,
-        scaleType: ScalarType,
-        aType: ScalarType,
-        bType: ScalarType,
-        cType: ScalarType,
-        dType: ScalarType,
+        scaleType: StorageElementType,
+        aType: StorageElementType,
+        bType: StorageElementType,
+        cType: StorageElementType,
+        dType: StorageElementType,
         using queue: PlatformType.Device.Queue = Context.currentQueue
     ) -> [Int] {
         assert(cType == dType, "must be equal for now")

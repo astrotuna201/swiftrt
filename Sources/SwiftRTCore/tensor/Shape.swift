@@ -30,6 +30,10 @@ public protocol TensorShape: SIMD where Scalar == Int {
     /// a tuple of zeros
     static var zeroTuple: Tuple { get }
 
+    /// withUnsafePointer(_:
+    /// used to pass the shape values to drivers
+    func withUnsafePointer<Result>(_ body: (UnsafePointer<Int>) -> Result) -> Result
+
     //---------------------------------
     // convenience initializers
     // the associated tuple type is used to make cleaner looking api arguments
@@ -63,7 +67,7 @@ public typealias Shape6 = SIMD6<Int>
 
 //==============================================================================
 // messages
-public let _messageInvalidShape = "shape dimensions must be greater than 0"
+@usableFromInline let _messageInvalidShape = "shape dimensions must be greater than 0"
 
 //==============================================================================
 // TensorShape extensions
@@ -71,21 +75,22 @@ public extension TensorShape {
     
     //--------------------------------------------------------------------------
     /// init with optional tuple shape
-    @inlinable @_transparent
-    init?(_ shape: Tuple?) {
+    @inlinable init?(_ shape: Tuple?) {
         guard let shape = shape else { return nil }
         self.init(shape)
     }
 
     //--------------------------------------------------------------------------
-    /// instance member access
-    @inlinable @_transparent
-    var count: Int { Self.rank }
+    /// the number of dimensions
+    @inlinable var count: Int { Self.rank }
+
+    //--------------------------------------------------------------------------
+    /// the value of the last dimension
+    @inlinable var last: Int { self[Self.rank - 1] }
 
     //--------------------------------------------------------------------------
     /// transpose last two dimensions
-    @inlinable @_transparent
-    var t: Self {
+    @inlinable var t: Self {
         var transposed = self
         transposed.swapAt(Self.rank-1, Self.rank-2)
         return transposed
@@ -93,8 +98,7 @@ public extension TensorShape {
     
     //--------------------------------------------------------------------------
     /// copy to Swift Array
-    @inlinable @_transparent
-    var array: [Scalar] {
+    @inlinable var array: [Scalar] {
         var a = [Scalar]()
         indices.forEach { a.append(self[$0]) }
         return a
@@ -102,8 +106,8 @@ public extension TensorShape {
     
     //--------------------------------------------------------------------------
     /// conversion to Int32 array to support marshalling to drivers
-    @inlinable @_transparent
-    var asInt32: [Int32] {
+    // TODO: should go away
+    @inlinable var asInt32: [Int32] {
         var values = [Int32]()
         indices.forEach { values.append(Int32(self[$0])) }
         return values
@@ -111,8 +115,7 @@ public extension TensorShape {
 
     //--------------------------------------------------------------------------
     /// helper
-    @inlinable @_transparent
-    mutating func swapAt(_ a: Int, _ b: Int) {
+    @inlinable mutating func swapAt(_ a: Int, _ b: Int) {
         let tmp = self[a]
         self[a] = self[b]
         self[b] = tmp
@@ -290,6 +293,16 @@ extension SIMD1: TensorShape where Scalar == Int {
         next[0] &+= 1
         return next
     }
+
+    //--------------------------------------------------------------------------
+    /// withUnsafePointer(_:
+    @inlinable public func withUnsafePointer<Result>(
+        _ body: (UnsafePointer<Int>) -> Result
+    ) -> Result {
+        Swift.withUnsafePointer(to: _storage) {
+            body(UnsafeRawPointer($0).assumingMemoryBound(to: Int.self))
+        }
+    }
 }
 
 //==============================================================================
@@ -333,6 +346,16 @@ extension SIMD2: TensorShape where Scalar == Int {
         }
         return next
     }
+
+    //--------------------------------------------------------------------------
+    /// withUnsafePointer(_:
+    @inlinable public func withUnsafePointer<Result>(
+        _ body: (UnsafePointer<Int>) -> Result
+    ) -> Result {
+        Swift.withUnsafePointer(to: _storage) {
+            body(UnsafeRawPointer($0).assumingMemoryBound(to: Int.self))
+        }
+    }
 }
 
 //==============================================================================
@@ -373,6 +396,16 @@ extension SIMD3: TensorShape where Scalar == Int {
             }
         }
         return next
+    }
+
+    //--------------------------------------------------------------------------
+    /// withUnsafePointer(_:
+    @inlinable public func withUnsafePointer<Result>(
+        _ body: (UnsafePointer<Int>) -> Result
+    ) -> Result {
+        Swift.withUnsafePointer(to: _storage) {
+            body(UnsafeRawPointer($0).assumingMemoryBound(to: Int.self))
+        }
     }
 }
 
@@ -420,6 +453,16 @@ extension SIMD4: TensorShape where Scalar == Int {
             }
         }
         return next
+    }
+
+    //--------------------------------------------------------------------------
+    /// withUnsafePointer(_:
+    @inlinable public func withUnsafePointer<Result>(
+        _ body: (UnsafePointer<Int>) -> Result
+    ) -> Result {
+        Swift.withUnsafePointer(to: _storage) {
+            body(UnsafeRawPointer($0).assumingMemoryBound(to: Int.self))
+        }
     }
 }
 
@@ -473,6 +516,16 @@ extension SIMD5: TensorShape where Scalar == Int {
             }
         }
         return next
+    }
+
+    //--------------------------------------------------------------------------
+    /// withUnsafePointer(_:
+    @inlinable public func withUnsafePointer<Result>(
+        _ body: (UnsafePointer<Int>) -> Result
+    ) -> Result {
+        Swift.withUnsafePointer(to: _storage) {
+            body(UnsafeRawPointer($0).assumingMemoryBound(to: Int.self))
+        }
     }
 }
 
@@ -532,6 +585,16 @@ extension SIMD6: TensorShape where Scalar == Int {
             }
         }
         return next
+    }
+
+    //--------------------------------------------------------------------------
+    /// withUnsafePointer(_:
+    @inlinable public func withUnsafePointer<Result>(
+        _ body: (UnsafePointer<Int>) -> Result
+    ) -> Result {
+        Swift.withUnsafePointer(to: _storage) {
+            body(UnsafeRawPointer($0).assumingMemoryBound(to: Int.self))
+        }
     }
 }
 

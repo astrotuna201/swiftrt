@@ -65,7 +65,7 @@ public extension Platform {
     
     /// selects the application thread data interchange queue within
     /// the scope of the body
-    @inlinable func useSyncQueue() {
+    @inlinable func useAppThreadQueue() {
         queueStack[queueStack.count - 1] = appThreadQueue
     }
     
@@ -73,19 +73,19 @@ public extension Platform {
     /// the scope of the body
     /// - Parameters:
     ///  - body: a closure where the device queue will be used
-    @inlinable func usingSyncQueue<R>(_ body: () -> R) -> R {
+    @inlinable func usingAppThreadQueue<R>(_ body: () -> R) -> R {
         queueStack.append(appThreadQueue)
         defer { _ = queueStack.popLast() }
         return body()
     }
-    
+
     /// selects the specified device queue for output within the scope of
     /// the body
     /// - Parameters:
     ///  - device: the device to use. Device 0 is the cpu
     ///  - queue: the queue on the device to use
     ///  - body: a closure where the device queue will be used
-    @inlinable func using<R>(device: Int, queue: Int = 0, _ body: () -> R) -> R {
+    @inlinable func using<R>(device: Int, queue: Int, _ body: () -> R) -> R {
         // push the selection onto the queue stack
         queueStack.append(validQueue(device, queue))
         defer { _ = queueStack.popLast() }
@@ -117,21 +117,36 @@ public extension Platform {
 
 //==============================================================================
 // queue API
+
+/// useAppThreadQueue
+/// specifies the application thread queue to be used for operator execution
+@inlinable public func useAppThreadQueue() {
+    Context.local.platform.useAppThreadQueue()
+}
+
+/// useAppThreadQueue(body:
+/// specifies the application thread queue to be used for operator execution
+/// withing the scope of the closure
+@inlinable public func usingAppThreadQueue<R>(_ body: () -> R) -> R {
+    Context.local.platform.usingAppThreadQueue(body)
+}
+
+/// use(device:queue:
+/// specifies the device queue to use for operator execution
 @inlinable public func use(device: Int, queue: Int = 0) {
     Context.local.platform.use(device: device, queue: queue)
 }
 
-@inlinable public func useSyncQueue() { Context.local.platform.useSyncQueue() }
-
-@inlinable public func usingSyncQueue<R>(_ body: () -> R) -> R {
-    Context.local.platform.usingSyncQueue(body)
-}
-
-@inlinable public func using<R>(device: Int, queue: Int = 0,
-                                _ body: () -> R) -> R {
+/// use(device:queue:body:
+/// specifies the device queue to use for operator execution
+/// withing the scope of the closure
+@inlinable public func using<R>(device: Int, queue: Int = 0, _ body: () -> R) -> R {
     Context.local.platform.using(device: device, queue: queue, body)
 }
 
+/// use(queue:body:
+/// specifies the queue on the current device to use for operator execution
+/// withing the scope of the closure
 @inlinable public func using<R>(queue: Int, _ body: () -> R) -> R {
     Context.local.platform.using(queue: queue, body)
 }
@@ -139,6 +154,14 @@ public extension Platform {
 //==============================================================================
 /// the type used for memory indexing on discrete devices
 public typealias DeviceIndex = Int32
+
+//==============================================================================
+// assert messages
+@usableFromInline let _messageTensorShapeMismatch = "tensor shape mismatch"
+@usableFromInline let _messageTensorOrderMismatch = "tensor order mismatch"
+@usableFromInline let _messageElementsMustBeContiguous = "elements must be contigous"
+@usableFromInline let _messageRepeatingStorageOrderNotSupported =
+    "repeating storage order is not supported"
 
 //==============================================================================
 /// NanPropagation
@@ -204,16 +227,24 @@ public protocol DeviceMemory: class, Logging {
     var buffer: UnsafeMutableRawBufferPointer { get }
     /// index of device where memory is located
     var deviceIndex: Int { get }
+    /// mutable raw pointer to memory buffer to simplify driver calls
+    var mutablePointer: UnsafeMutableRawPointer { get }
     /// the diagnostic name of the memory
     var name: String? { get set }
-    /// mutable raw pointer to memory buffer to simplify driver calls
-    var pointer: UnsafeMutableRawPointer { get }
+    /// raw pointer to memory buffer to simplify driver calls
+    var pointer: UnsafeRawPointer { get }
     /// optional string for diagnostics
     var releaseMessage: String? { get set }
     /// specifies the device memory type for data transfer
     var type: MemoryType { get }
     /// version
     var version: Int { get set }
+}
+
+extension DeviceMemory {
+    @inlinable public func count<E>(of type: E.Type) -> Int {
+        buffer.count / MemoryLayout<E>.size
+    }
 }
 
 //==============================================================================
@@ -286,22 +317,8 @@ public enum DeviceQueueMode {
 }
 
 //==============================================================================
-/// QueueId
-/// a unique device queue identifier that is used to index
-/// through the platform device tree for directing workflow
-public struct QueueId {
-    public let device: Int
-    public let queue: Int
-    
-    @inlinable public init(_ device: Int, _ queue: Int) {
-        self.device = device
-        self.queue = queue
-    }
-}
-
-//==============================================================================
 // assert messages
-public let _messageQueueThreadViolation =
+@usableFromInline let _messageQueueThreadViolation =
 "a queue can only be accessed by the thread that created it"
 
 //==============================================================================
@@ -312,93 +329,3 @@ public enum DeviceError : Error {
     case queueError(idPath: [Int], message: String)
     case timeout(idPath: [Int], message: String)
 }
-
-//==============================================================================
-/// ScalarType
-/// Used primarily for serialization, C APIs, and Cuda kernels
-public enum ScalarType: Int {
-    // floating point
-    case real16F, complex16F
-    case real16BF, complex16BF
-    case real32F, complex32F
-    case real64F, complex64F
-
-    // integer
-    case real4I, real4U, complex4I, complex4U
-    case real8I, real8U, complex8I, complex8U
-    case real16I, real16U, complex16I, complex16U
-    case real32I, real32U, complex32I, complex32U
-    case real64U, real64I, complex64I, complex64U
-
-    // non numeric
-    case bool
-}
-
-// TODO: extend to all supported types
-//
-public protocol ScalarElement: StorageElement {
-    static var type: ScalarType { get }
-    static var zeroPointer: UnsafeRawPointer { get }
-    static var onePointer: UnsafeRawPointer { get }
-}
-
-extension Int8: ScalarElement {
-    @inlinable public static var type: ScalarType { .real8I }
-    
-    public static var zero: Self = 0
-    @inlinable public
-    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
-    
-    public static var one: Self = 1
-    @inlinable public
-    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
-}
-
-extension UInt8: ScalarElement {
-    @inlinable public static var type: ScalarType { .real8U }
-    
-    public static var zero: Self = 0
-    @inlinable public
-    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
-    
-    public static var one: Self = 1
-    @inlinable public
-    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
-}
-
-extension Float: ScalarElement {
-    @inlinable public static var type: ScalarType { .real32F }
-    
-    public static var zero: Self = 0
-    @inlinable public
-    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
-    
-    public static var one: Self = 1
-    @inlinable public
-    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
-}
-
-extension Float16: ScalarElement {
-    @inlinable public static var type: ScalarType { .real16F }
-    
-    public static var zero: Self = Float16(0)
-    @inlinable public
-    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
-    
-    public static var one: Self = Float16(1)
-    @inlinable public
-    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
-}
-
-extension Double: ScalarElement {
-    @inlinable public static var type: ScalarType { .real64F }
-    
-    public static var zero: Self = 0
-    @inlinable public
-    static var zeroPointer: UnsafeRawPointer { UnsafeRawPointer(&zero) }
-    
-    public static var one: Self = 1
-    @inlinable public
-    static var onePointer: UnsafeRawPointer { UnsafeRawPointer(&one) }
-}
-

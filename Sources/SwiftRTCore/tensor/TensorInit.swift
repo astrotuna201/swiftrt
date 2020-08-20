@@ -27,7 +27,7 @@ public typealias TensorR6<Element: StorageElement> = Tensor<Shape6, Element>
 
 //==============================================================================
 // parameter matching helpers
-@inlinable public func repeatedStrides<Shape,E>(
+@usableFromInline func repeatedStrides<Shape,E>(
     matching other: Tensor<Shape,E>,
     to shape: Shape
 ) -> Shape {
@@ -52,7 +52,7 @@ public typealias TensorR6<Element: StorageElement> = Tensor<Shape6, Element>
 
 //------------------------------------------------------------------------------
 // TODO: THIS NEEDS TO BE REMOVED. IT'S A HACK FOR AD SUPPORT
-@inlinable public func match<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>)
+@usableFromInline func match<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>)
     -> (Tensor<S,E>, Tensor<S,E>) where S: TensorShape
 {
     if lhs.count == rhs.count {
@@ -93,7 +93,7 @@ public extension Tensor {
                   count: count,
                   storage: storage,
                   storageBase: 0,
-                  stridedSpanCount: count,
+                  spanCount: count,
                   order: order,
                   shared: false)
     }
@@ -161,13 +161,13 @@ public extension Tensor {
                   count: count,
                   storage: other.storage,
                   storageBase: other.storageBase,
-                  stridedSpanCount: shape.spanCount(stridedBy: strides),
+                  spanCount: shape.spanCount(stridedBy: strides),
                   order: other.order,
                   shared: other.isShared)
     }
     
     //--------------------------------------------------------------------------
-    /// reductionBounds
+    /// reductionShape
     /// returns the upper bounds for a reduction result along the specified axes
     @inlinable func reductionShape(alongAxes axes: Set<Int>?) -> Shape {
         guard let axes = axes else { return Shape.one }
@@ -182,7 +182,7 @@ public extension Tensor {
 extension Tensor where TensorElement.Value: DifferentiableElement
 {
     @derivative(of: init(repeating:to:order:name:))
-    @inlinable static func _vjpInit(
+    @usableFromInline static func _vjpInit(
         repeating element: Element,
         to shape: Shape,
         order: Order,
@@ -195,7 +195,7 @@ extension Tensor where TensorElement.Value: DifferentiableElement
     }
     
     @derivative(of: init(repeating:to:))
-    @inlinable static func _vjpInit(repeating other: Self, to shape: Shape)
+    @usableFromInline static func _vjpInit(repeating other: Self, to shape: Shape)
         -> (value: Self, pullback: (Self) -> (Self))
     {
         // TODO: this is probably wrong. Test this
@@ -472,13 +472,13 @@ public extension Tensor {
                                            count: source.count,
                                            name: other.name),
                 storageBase: 0,
-                stridedSpanCount: other.stridedSpanCount,
+                spanCount: other.spanCount,
                 order: order,
                 shared: other.isShared)
             
             // performs an indexed copy which reorders the elements
-            Context.currentQueue.diagnostic(
-                "\(reorderString) copying \(other.diagnosticName) --> " +
+            Context.currentQueue.diagnostic(.reorder,
+                "copying \(other.diagnosticName) --> " +
                 "\(source.diagnosticName) \(Element.self)[\(source.count)]" +
                 " on \(Context.currentQueue.name)",
                 categories: [.dataCopy, .dataReorder])
@@ -492,7 +492,7 @@ public extension Tensor {
                   count: source.count,
                   storage: source.storage,
                   storageBase: source.storageBase,
-                  stridedSpanCount: source.stridedSpanCount,
+                  spanCount: source.spanCount,
                   order: source.order,
                   shared: source.isShared)
     }
@@ -501,7 +501,7 @@ public extension Tensor {
 extension Tensor where TensorElement.Value: DifferentiableElement
 {
     @derivative(of: init(reshaping:to:order:))
-    @inlinable static func _vjpInit<S>(
+    @usableFromInline static func _vjpInit<S>(
         reshaping other: Tensor<S,TensorElement>,
         to newShape: Shape,
         order newOrder: Order
@@ -576,7 +576,7 @@ public extension Tensor {
                   count: other.count,
                   storage: other.storage,
                   storageBase: other.storageBase,
-                  stridedSpanCount: other.stridedSpanCount,
+                  spanCount: other.spanCount,
                   order: other.order,
                   shared: other.isShared)
     }
@@ -592,7 +592,7 @@ public extension Tensor {
 extension Tensor where TensorElement.Value: DifferentiableElement
 {
     @derivative(of: init(expanding:axes:))
-    @inlinable public static func _vjpInit<S, Axes>(
+    @usableFromInline static func _vjpInit<S, Axes>(
         expanding other: Tensor<S,TensorElement>,
         axes: Axes
     ) -> (value: Self, pullback: (Self) -> Tensor<S,TensorElement>)
@@ -639,7 +639,7 @@ public extension Tensor {
                   count: other.count,
                   storage: other.storage,
                   storageBase: other.storageBase,
-                  stridedSpanCount: other.stridedSpanCount,
+                  spanCount: other.spanCount,
                   order: other.order,
                   shared: other.isShared)
     }
@@ -655,7 +655,7 @@ public extension Tensor {
 extension Tensor where TensorElement.Value: DifferentiableElement
 {
     @derivative(of: init(squeezing:axes:))
-    @inlinable static func _vjpInit<S, Axes>(
+    @usableFromInline static func _vjpInit<S, Axes>(
         squeezing other: Tensor<S,TensorElement>,
         axes: Axes
     ) -> (value: Self, pullback: (Self) -> Tensor<S,TensorElement>)
@@ -758,7 +758,7 @@ public extension Tensor {
 }
 
 @derivative(of: stack)
-func vjpStack<S,SR,E>(
+@inlinable func vjpStack<S,SR,E>(
     _ tensors: [Tensor<S,E>],
     axis: Int = 0,
     into result: inout Tensor<SR,E>
@@ -829,7 +829,7 @@ public extension Tensor {
                   count: other.count,
                   storage: other.storage,
                   storageBase: other.storageBase,
-                  stridedSpanCount: other.stridedSpanCount,
+                  spanCount: other.spanCount,
                   order: other.order,
                   shared: other.isShared)
     }
@@ -881,7 +881,7 @@ public extension Tensor {
                   count: other.count,
                   storage: other.storage,
                   storageBase: other.storageBase,
-                  stridedSpanCount: other.stridedSpanCount,
+                  spanCount: other.spanCount,
                   order: other.order,
                   shared: other.isShared)
     }
@@ -899,7 +899,7 @@ public extension Tensor {
 extension Tensor where TensorElement.Value: DifferentiableElement {
     
     @derivative(of: init(transposing:permutatedBy:))
-    @inlinable static func _vjpInit(
+    @usableFromInline static func _vjpInit(
         transposing other: Self,
         permutatedBy permutations: Shape?
     ) -> (value: Self, pullback: (Self) -> Self)
@@ -911,7 +911,7 @@ extension Tensor where TensorElement.Value: DifferentiableElement {
                  count: other.count,
                  storage: $0.storage,
                  storageBase: $0.storageBase,
-                 stridedSpanCount: other.stridedSpanCount,
+                 spanCount: other.spanCount,
                  order: other.order,
                  shared: $0.isShared)
         })

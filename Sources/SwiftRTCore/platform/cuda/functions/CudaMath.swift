@@ -13,53 +13,187 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import CCuda
-import CudaKernels
+import SwiftRTCuda
+import Numerics
 
 //==============================================================================
 // DeviceQueue functions with default cpu delegation
 extension CudaQueue {
     //--------------------------------------------------------------------------
     @inlinable public func add<S,E>(
-        _ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>,
-        _ result: inout Tensor<S,E>
-    ) where S: TensorShape, E.Value: AdditiveArithmetic {
-        guard useGpu else { cpu_add(lhs, rhs, &result); return }
+        _ lhs: Tensor<S,E>, 
+        _ rhs: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: AdditiveArithmetic {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
+        guard useGpu else { cpu_add(lhs, rhs, &out); return }
 
-       cudaCheck(srtAdd(
-           CUDA_R_32F,
-           lhs.deviceRead(using: self),
-           rhs.deviceRead(using: self),
-           result.deviceReadWrite(using: self),
-           UInt32(lhs.count),
-           stream
-       ))
+        let status = out.withMutableTensor(using: self) { oData, o in
+            lhs.withTensor(using: self) { lData, l in
+                rhs.withTensor(using: self) { rData, r in
+                    srtAdd(lData, l, rData, r, oData, o, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.add(lhs, rhs, &out) }
     }
 
     //--------------------------------------------------------------------------
-    // https://docs.nvidia.com/cuda/cublas/index.html#using-the-cublasLt-api
-    // samples: https://github.com/NVIDIA/CUDALibrarySamples/tree/master/cuBLASLt
-    @inlinable func matmul<E>(
-        _ lhs: TensorR2<E>, _ transposeLhs: Bool,
-        _ rhs: TensorR2<E>, _ transposeRhs: Bool,
-        _ result: inout TensorR2<E>
-    ) where E.Value: Numeric {
-        guard useGpu else {
-            cpu_matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
-            return 
-        }
-        
-    }
-    //--------------------------------------------------------------------------
-    @inlinable func matmul<E>(
-        _ lhs: TensorR3<E>, _ transposeLhs: Bool,
-        _ rhs: TensorR3<E>, _ transposeRhs: Bool,
-        _ result: inout TensorR3<E>
-    ) where E.Value: Numeric {
-        guard useGpu else {
-            cpu_matmul(lhs, transposeLhs, rhs, transposeRhs, &result)
-            return 
+    @inlinable public func div<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: AlgebraicField {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
+        guard useGpu else { cpu_div(lhs, rhs, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            lhs.withTensor(using: self) { lData, l in
+                rhs.withTensor(using: self) { rData, r in
+                    srtDiv(lData, l, rData, r, oData, o, stream)
+                }
+            }
         }
 
+        cpuFallback(status) { $0.div(lhs, rhs, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable public func mul<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Numeric {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
+        guard useGpu else { cpu_mul(lhs, rhs, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            lhs.withTensor(using: self) { lData, l in
+                rhs.withTensor(using: self) { rData, r in
+                    srtMul(lData, l, rData, r, oData, o, stream)
+                }
+            }
+        }
+
+        cpuFallback(status) { $0.mul(lhs, rhs, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable public func subtract<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: AdditiveArithmetic {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
+        guard useGpu else { cpu_subtract(lhs, rhs, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            lhs.withTensor(using: self) { lData, l in
+                rhs.withTensor(using: self) { rData, r in
+                    srtSub(lData, l, rData, r, oData, o, stream)
+                }
+            }
+        }
+
+        cpuFallback(status) { $0.subtract(lhs, rhs, &out) }
+    }
+}
+
+//==============================================================================
+// Additional math ops with unique arguments
+extension CudaQueue {
+    //--------------------------------------------------------------------------
+    @inlinable func atan2<S,E>(
+        _ y: Tensor<S,E>, 
+        _ x: Tensor<S,E>, 
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Real {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_atan2(y, x, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            y.withTensor(using: self) { yData, y in
+                x.withTensor(using: self) { xData, x in
+                    srtAtan2(yData, y, xData, x, oData, o, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.atan2(y, x, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func hypot<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: Tensor<S,E>, 
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Real {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_hypot(x, y, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            x.withTensor(using: self) { xData, x in
+                y.withTensor(using: self) { yData, y in
+                    srtHypot(xData, x, yData, y, oData, o, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.hypot(x, y, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func pow<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: Tensor<S,E>, 
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Real {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_pow(x, y, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            x.withTensor(using: self) { xData, x in
+                y.withTensor(using: self) { yData, y in
+                    srtPow(xData, x, yData, y, oData, o, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.pow(x, y, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func pow<S,E>(
+        _ x: Tensor<S,E>, 
+        _ n: Int, 
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Real {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_pow(x, n, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            x.withTensor(using: self) { xData, x in
+                srtPowN(xData, x, n, oData, o, stream)
+            }
+        }
+        cpuFallback(status) { $0.pow(x, n, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func root<S,E>(
+        _ x: Tensor<S,E>, 
+        _ n: Int, 
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Real {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_root(x, n, &out); return }
+
+        let status = out.withMutableTensor(using: self) { oData, o in
+            x.withTensor(using: self) { xData, x in
+                srtRoot(xData, x, n, oData, o, stream)
+            }
+        }
+        cpuFallback(status) { $0.root(x, n, &out) }
     }
 }

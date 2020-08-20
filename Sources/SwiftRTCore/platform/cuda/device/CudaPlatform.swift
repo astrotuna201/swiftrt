@@ -13,8 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import Foundation
-import CCuda
+import SwiftRTCuda
 
 //==============================================================================
 /// CudaPlatform
@@ -37,7 +36,7 @@ public class CudaPlatform: Platform {
         name = "\(Self.self)"
         logInfo = LogInfo(logWriter: Context.log, logLevel: .error,
                           namePath: name, nestingLevel: 0)
-
+                          
         //----------------------------
         // CudaDevice is overloaded to avoid using Swift existentials
         // to support both cpu and gpu operations.
@@ -49,6 +48,13 @@ public class CudaPlatform: Platform {
                               name: "appThread",
                               queueMode: .sync,
                               useGpu: false)
+
+
+        // if the cpu queue count is 0 then at least add in
+        // the appThreadQueue so there is something to work with
+        if devices[0].queues.count == 0 {
+            devices[0].queues.append(appThreadQueue)
+        }            
 
         //----------------------------
         // query cuda to get number of installed devices
@@ -63,19 +69,60 @@ public class CudaPlatform: Platform {
 
         //----------------------------
         // select first gpu queue 0 as default
-        if gpuDeviceCount == 0 {
-            writeLog("There are no '\(self.name)' devices installed",
-                     level: .warning)
-            queueStack = [appThreadQueue]
-        } else if devices[0].queues.count > 0 {
+        if gpuDeviceCount > 0 {
             queueStack = [devices[1].queues[0]]
         } else {
+            writeLog("There are no '\(self.name)' devices installed",
+                     level: .warning)
             queueStack = [appThreadQueue]
         }
 
         diagnostic("\(deviceString) default: \(queueStack[0].name)",
                     categories: .device)
     }
+}
+
+//==============================================================================
+/// cpuFallback
+/// if `status` is equal to `cudaErrorNotSupported` then a diagnostic message
+/// is logged and the fallback body is executed.
+@inlinable public func cpuFallback(
+    _ status: cudaError_t,
+    _ body: (PlatformType.Device.Queue) -> Void
+) {
+    if status == cudaErrorNotSupported {
+        let name = Context.currentQueue.deviceName
+        using(device: 0) {
+            Context.currentQueue.diagnostic(
+                "\(fallbackString) unsupported function on \(name) " +
+                "delegated to \(Context.currentQueue.name)",
+                 categories: .fallback) 
+            body(Context.currentQueue)
+        }
+    } else {
+        cudaCheck(status)
+    }
+}
+
+//==============================================================================
+// cudaCheck cudaStream_t
+@inlinable public func cudaCheck(
+    _ stream: cudaStream_t,
+    file: String = #file,
+    function: String = #function,
+    line: Int = #line
+) {
+#if DEBUG
+    cudaStreamSynchronize(stream)
+    let status = cudaGetLastError()
+    if status != cudaSuccess {
+        let location = "CUDA error in \(file) at \(function):\(line)"
+        let message = String(utf8String: cudaGetErrorString(status))!
+        cudaDeviceReset()
+        Context.currentQueue.writeLog("\(message) at \(location)")
+        fatalError("unrecoverable error")
+    }
+#endif
 }
 
 //==============================================================================
@@ -152,7 +199,7 @@ extension cublasStatus_t : Hashable {}
 //==============================================================================
 // cudaCheck curandStatus_t
 @inlinable public func cudaCheck(
-    status: curandStatus_t,
+    _ status: curandStatus_t,
     file: String = #file,
     function: String = #function,
     line: Int = #line)
@@ -336,12 +383,7 @@ public class DropoutDescriptor {
                 tensorDesc.desc, &stateSizeInBytes))
 
             // create states array
-            do {
-                states = try stream.allocate(byteCount: stateSizeInBytes)
-            } catch {
-                Context.currentQueue.writeLog("\(createString) \(error)")
-                fatalError()
-            }
+            states = stream.allocate(stateSizeInBytes)
 
             // initialize
             cudaCheck(cudnnSetDropoutDescriptor(
@@ -366,7 +408,7 @@ public final class FilterDescriptor {
     public let desc: cudnnFilterDescriptor_t
 
     // initializers
-    @inlinable public init<S,E: ScalarElement>(_ tensor: Tensor<S,E>) {
+    @inlinable public init<S,E>(_ tensor: Tensor<S,E>) {
         // create the descriptor
         var temp: cudnnFilterDescriptor_t?
         cudaCheck(cudnnCreateFilterDescriptor(&temp))
@@ -429,7 +471,7 @@ public final class TensorDescriptor {
     @inlinable public init<S: TensorShape>(
         shape: S,
         strides: S,
-        scalarType: ScalarType
+        scalarType: StorageElementType
     ) {
         assert(shape.count >= 4 && shape.count <= CUDNN_DIM_MAX,
             "cudnn tensor rank must be between 4 and \(CUDNN_DIM_MAX)")
@@ -459,7 +501,7 @@ public final class TensorDescriptor {
     //--------------------------------------------------------------------------
     // getInfo
     @inlinable public func getInfo()
-    -> (extent: [Int], strides: [Int], ScalarType)
+    -> (extent: [Int], strides: [Int], StorageElementType)
     {
         let reqDims = Int(CUDNN_DIM_MAX)
         var dims = [Int32](repeating: 0, count: reqDims)
@@ -478,14 +520,14 @@ public final class TensorDescriptor {
 
         return (dims[0..<Int(numDims)].map(Int.init),
                 strides[0..<Int(numDims)].map(Int.init),
-                ScalarType(type))
+                StorageElementType(type))
     }
 }
 
 //==============================================================================
 /// createTensorDescriptor
 /// creates a cudnn tensor descriptor for the associated Tensor
-extension Tensor where TensorElement: ScalarElement {
+extension Tensor {
     @inlinable public func createTensorDescriptor(
         asShape newShape: Shape? = nil
     ) -> TensorDescriptor {
@@ -507,7 +549,7 @@ public final class ReductionTensorDescriptor {
     @inlinable public init(
         op: ReductionOp,
         nan: NanPropagation,
-        scalarType: ScalarType
+        scalarType: StorageElementType
     ) {
         // create the descriptor
         var temp: cudnnReduceTensorDescriptor_t?

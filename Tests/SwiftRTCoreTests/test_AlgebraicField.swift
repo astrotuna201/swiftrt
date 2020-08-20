@@ -25,53 +25,67 @@ class test_AlgebraicField: XCTestCase {
         // ("test_queryMatmulProperties", test_queryMatmulProperties),
         // ("test_minimalAdd", test_minimalAdd),
         // ("test_minimalAddVJP", test_minimalAddVJP),
-
+        
         // ("test_matmul", test_matmul),
         // ("test_batchMatmul", test_batchMatmul),
         // ("test_leftBatchMatmul", test_leftBatchMatmul),
         // ("test_rightBatchMatmul", test_rightBatchMatmul),
-
+        
+        // ("test_perfAdd", test_perfAdd),
         ("test_add", test_add),
+        ("test_addStrided", test_addStrided),
+        // ("test_addFloat16", test_addFloat16),
+        // ("test_addBFloat16", test_addBFloat16),
+
         // ("test_addInt32", test_addInt32),
         // ("test_addUInt8", test_addUInt8),
         // ("test_addScalar", test_addScalar),
         // ("test_addAndAssign", test_addAndAssign),
         // ("test_addSubMulDivComplex", test_addSubMulDivComplex),
 
-        // ("test_subtract", test_subtract),
-        // ("test_subtractScalar", test_subtractScalar),
-        // ("test_subtractVector", test_subtractVector),
-        // ("test_subtractAndAssign", test_subtractAndAssign),
+        //  ("test_subtract", test_subtract),
+        //  ("test_subtractScalar", test_subtractScalar),
+        //  ("test_subtractVector", test_subtractVector),
+        //  ("test_subtractAndAssign", test_subtractAndAssign),
 
-        // ("test_mul", test_mul),
-        // ("test_mulScalar", test_mulScalar),
-        // ("test_mulAndAssign", test_mulAndAssign),
+        //  ("test_mul", test_mul),
+        //  ("test_mulScalar", test_mulScalar),
+        //  ("test_mulAndAssign", test_mulAndAssign),
 
-        // ("test_div", test_div),
-        // ("test_divScalar", test_divScalar),
-        // ("test_divAndAssign", test_divAndAssign),
+        //  ("test_div", test_div),
+        //  ("test_divScalar", test_divScalar),
+        //  ("test_divAndAssign", test_divAndAssign),
     ]
 
     //--------------------------------------------------------------------------
+    func test_addStrided() {
+        // Context.log.level = .diagnostic
+        let a = array(0..<9, (3, 3), type: Float.self)
+        let b = a[..., 1] + 1
+        // print(b)
+        XCTAssert(b == [[2], [5], [8]])
+    }
+
+    //--------------------------------------------------------------------------
     func test_queryMatmulProperties() {
-        Context.log.level = .diagnostic
-        do {
-            let a = array(0..<6, (3, 2), type: Float16.self)
-            print(a)
-            let b = array(0..<8, (2, 4), type: Float16.self)
-            print(b)
-            var c = empty((3, 4), type: Float16.self)
-            let preferences = MatmulPreferences()
-            print(preferences)            
+        // Context.log.level = .diagnostic
+        // do {
+        //     let a = array(0..<6, (3, 2), type: Float16.self)
+        //     print(a)
+        //     let b = array(0..<8, (2, 4), type: Float16.self)
+        //     print(b)
+        //     var c = empty((3, 4), type: Float16.self)
+        //     let preferences = MatmulPreferences()
+        //     print(preferences)            
             
-            let props = MatmulAlgorithm.query(
-                a, b, &c, 
-                accumulatorType: .accumulator16F,
-                scaleType: .real16F,
-                preferences: preferences,
-                using: Context.currentQueue)
-            print(props)
-        }
+        //     let props = MatmulAlgorithm.query(
+        //         a, b, &c, 
+        //         accumulatorType: .accumulator16F,
+        //         scaleType: .real16F,
+        //         preferences: preferences,
+        //         using: Context.currentQueue)
+        //     print(props)
+        // }
 
         // do {
         //     let a = ones((32, 2))
@@ -119,7 +133,7 @@ class test_AlgebraicField: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_matmul() {
-        Context.log.level = .diagnostic
+        // Context.log.level = .diagnostic
         let a = array([0, 1, 2, 3, 4, 5], (3, 2))
         let b = array([0, 1, 2, 3, 4, 5, 6, 7], (2, 4))
         let c = matmul(a, b)
@@ -213,27 +227,63 @@ class test_AlgebraicField: XCTestCase {
     }
 
     //--------------------------------------------------------------------------
-    func test_add() {
-        Context.log.level = .diagnostic
-        let a = array([[0, 1], [2, 3], [4, 5]])
-        let b = array([[0, 1], [2, 3], [4, 5]])
+    func test_perfAdd() {
+        #if !DEBUG
+        let r = 300
+        let c = 200
+        let a = array(0..<(r * c), (r, c), name: "A")
+        let b = array(0..<(r * c), (r, c), name: "B")
+        var result = empty((3, 2))
+        // let aOnes = ones(like: a)
+
+        measure {
+            // for _ in 0..<100 {
+                result = a + b
+            // }
+            print(result[0, 3])
+        }
+        #endif
+    }
+
+    //--------------------------------------------------------------------------
+    func test_add() { 
+//        Context.log.level = .diagnostic
+        let a = array(0..<6, (3, 2), name: "A")
+        let b = array(0..<6, (3, 2), name: "B")
+        let aOnes = ones(like: a)
+
         let result = a + b
-        print(result)
         XCTAssert(result == [[0, 2], [4, 6], [8, 10]])
-        
+
         // both
-        let (g1, g2) = pullback(at: a, b, in: { $0 + $1 })(ones(like: a))
-        
+        let (g1, g2) = pullback(at: a, b, in: { $0 + $1 })(aOnes)
         XCTAssert(g1.flatArray == [1, 1, 1, 1, 1, 1])
         XCTAssert(g2.flatArray == [1, 1, 1, 1, 1, 1])
         
         // lhs
-        let glhs = pullback(at: a, in: { $0 + 2 })(ones(like: a))
+        let glhs = pullback(at: a, in: { $0 + 2 })(aOnes)
         XCTAssert(glhs.flatArray == [1, 1, 1, 1, 1, 1])
         
         // rhs
-        let grhs = pullback(at: a, in: { 2 + $0 })(ones(like: a))
+        let grhs = pullback(at: a, in: { 2 + $0 })(aOnes)
         XCTAssert(grhs.flatArray == [1, 1, 1, 1, 1, 1])
+    }
+
+    //--------------------------------------------------------------------------
+    func test_addFloat16() {
+        let a = array(0..<6, (3, 2), type: Float16.self)
+        let b = array(0..<6, (3, 2), type: Float16.self)
+        let result = a + b
+        XCTAssert(result == [[0, 2], [4, 6], [8, 10]])
+    }
+
+    //--------------------------------------------------------------------------
+    func test_addBFloat16() {
+        // Context.log.level = .diagnostic
+        let a = array(0..<6, (3, 2), type: BFloat16.self)
+        let b = array(0..<6, (3, 2), type: BFloat16.self)
+        let result = a + b
+        XCTAssert(result == [[0, 2], [4, 6], [8, 10]])
     }
 
     //--------------------------------------------------------------------------
@@ -272,6 +322,7 @@ class test_AlgebraicField: XCTestCase {
     
     //--------------------------------------------------------------------------
     func test_addSubMulDivComplex() {
+        // Context.log.level = .diagnostic
         typealias CF = Complex<Float>
         let data: [Complex<Float>] = [1, 2, 3, 4]
         let a = array(data, (2, 2))

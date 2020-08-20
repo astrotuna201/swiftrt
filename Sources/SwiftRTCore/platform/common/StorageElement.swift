@@ -22,9 +22,21 @@ import Numerics
 /// and operating on data types that are not native to the Swift language,
 /// but can be native and optimal for gpus
 public protocol StorageElement {
+    // types
     associatedtype Stored
     associatedtype Value
     
+    //--------------------------------------------------------------------------
+    /// a unique element type identifier used for driver dispatch.
+    static var type: StorageElementType { get }
+
+    /// a pointer to a `Stored` zero used for driver support 
+    static var storedZeroPointer: UnsafeRawPointer { get }
+
+    /// a pointer to a `Stored` one used for driver support 
+    static var storedOnePointer: UnsafeRawPointer { get }
+
+    //--------------------------------------------------------------------------
     /// alignment
     /// the Value alignment with the Stored type for the given logical index
     /// For example `Int1` the alignment is 0 - 7, Int4 0 - 1
@@ -32,7 +44,7 @@ public protocol StorageElement {
     /// - Parameter index: the logical element index
     /// - Returns: the value position with the stored element
     static func alignment(_ index: Int) -> Int
-    
+
     /// storedCount
     /// the number of `Stored` elements needed to contain the specified
     /// number of `Value` elements
@@ -112,6 +124,32 @@ public protocol StorageElement {
         in buffer: UnsafeMutableBufferPointer<Stored>,
         at index: Int
     )
+}
+
+//==============================================================================
+/// StorageElementType
+/// Used primarily for driver kernel dispatch and serialization
+public enum StorageElementType: Int, Codable {
+    // floating point
+    case real16F, complex16F
+    case real16BF, complex16BF
+    case real32F, complex32F
+    case real64F, complex64F
+
+    // integer
+    case real1U
+    case real4I, real4U, complex4I, complex4U
+    case real8I, real8U, complex8I, complex8U
+    case real16I, real16U, complex16I, complex16U
+    case real32I, real32U, complex32I, complex32U
+    case real64U, real64I, complex64I, complex64U
+
+    // vector types
+    case vector8Ux4
+    case vector32Fx4
+
+    // non numeric
+    case bool1, bool8
 }
 
 //==============================================================================
@@ -254,7 +292,23 @@ public struct Bool1: PackedStorageElement {
     @inlinable public static var valueMask: Stored { 0x1 }
     @inlinable public static var valueMin: Value { false }
     @inlinable public static var valueMax: Value { true }
+    @inlinable public static var type: StorageElementType { .bool1 }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
     
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
+    
+    //-------------------------------------
+    // value accessors
     @inlinable public static func value(
         at index: Int,
         from stored: UInt8
@@ -290,7 +344,7 @@ extension Tensor where TensorElement == Bool1 {
         order = other.order
         isShared = other.isShared
         count = other.count
-        stridedSpanCount = other.stridedSpanCount
+        spanCount = other.spanCount
         logicalStrides = other.logicalStrides
         logicalElements = LogicalElements(count,
                                           shape,
@@ -298,7 +352,7 @@ extension Tensor where TensorElement == Bool1 {
                                           storage,
                                           storageBase,
                                           order,
-                                          stridedSpanCount)
+                                          spanCount)
     }
 }
 
@@ -312,6 +366,20 @@ public struct UInt1: PackedStorageElement {
     @inlinable public static var valueMask: Stored { 0x1 }
     @inlinable public static var valueMin: Value { 0 }
     @inlinable public static var valueMax: Value { 1 }
+    @inlinable public static var type: StorageElementType { .real1U }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension Tensor where TensorElement == UInt1 {
@@ -323,7 +391,7 @@ extension Tensor where TensorElement == UInt1 {
         order = other.order
         isShared = other.isShared
         count = other.count
-        stridedSpanCount = other.stridedSpanCount
+        spanCount = other.spanCount
         logicalStrides = other.logicalStrides
         logicalElements = LogicalElements(count,
                                           shape,
@@ -331,7 +399,7 @@ extension Tensor where TensorElement == UInt1 {
                                           storage,
                                           storageBase,
                                           order,
-                                          stridedSpanCount)
+                                          spanCount)
     }
 }
 
@@ -345,15 +413,49 @@ public struct UInt4: PackedStorageElement {
     @inlinable public static var valueMask: Stored { 0x0F }
     @inlinable public static var valueMin: Value { 0 }
     @inlinable public static var valueMax: Value { 15 }
+    @inlinable public static var type: StorageElementType { .real4U }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 //==============================================================================
 // non native types that automatically cast to a native type during iteration
+//==============================================================================
+
+//==============================================================================
+// Float16
 extension Float16: StorageElement {
     @inlinable public static func storedIndex(_ index: Int) -> Int { index }
     @inlinable public static func storedCount(_ count: Int) -> Int { count }
     @inlinable public static func alignment(_ index: Int) -> Int { 0 }
+    @inlinable public static var type: StorageElementType { .real16F }
 
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
+
+    //-------------------------------------
+    // accessors
     @inlinable public static func value(
         at index: Int, from stored: Self
     ) -> Float { Float(stored) }
@@ -384,56 +486,257 @@ extension Float16: StorageElement {
 }
 
 //==============================================================================
+// BFloat16
+extension BFloat16: StorageElement {
+    @inlinable public static func storedIndex(_ index: Int) -> Int { index }
+    @inlinable public static func storedCount(_ count: Int) -> Int { count }
+    @inlinable public static func alignment(_ index: Int) -> Int { 0 }
+    @inlinable public static var type: StorageElementType { .real16BF }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
+
+    //-------------------------------------
+    // accessors
+    @inlinable public static func value(
+        at index: Int, from stored: Self
+    ) -> Float { Float(stored) }
+    
+    @inlinable public static func store(
+        value: Float, at index: Int, to stored: inout Self
+    ) { stored = Self(value) }
+
+    @inlinable public static func stored(value: Float) -> Self { Self(value) }
+
+    @inlinable public static func storedRange(start: Int, count: Int)
+    -> (storedStart: Int, storedCount: Int) { (start, count) }
+    
+    @inlinable public static func getValue(
+        from buffer: UnsafeBufferPointer<BFloat16>,
+        at index: Int
+    ) -> Float {
+        Float(buffer[index])
+    }
+    
+    @inlinable public static func set(
+        value: Float,
+        in buffer: UnsafeMutableBufferPointer<BFloat16>,
+        at index: Int
+    ) {
+        buffer[index] = BFloat16(value)
+    }
+}
+
+//==============================================================================
 // standard native type conformance
 extension Bool: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .bool8 }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = false
+    public static var _storedOne: Stored = true
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension Int8: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real8I }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension UInt8: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real8U }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension Int16: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real16I }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension UInt16: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real16U }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension Int32: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real32I }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension UInt32: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real32U }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension Float: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real32F }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
 extension Double: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType { .real64F }
+
+    //-------------------------------------
+    // pointers
+    public static var _storedZero: Stored = 0
+    public static var _storedOne: Stored = 1
+
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZero) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOne)
+    }
 }
 
+//------------------------------------------------------------------------------
 extension Complex: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
+    @inlinable public static var type: StorageElementType {
+        switch RealType.self {
+        case is Float.Type: return .complex32F
+        case is Float16.Type: return .complex16F
+        case is BFloat16.Type: return .complex16BF
+        case is Double.Type: return .complex64F
+        default: fatalError("Complex<\(RealType.self)> not implemented yet")
+        }
+    }
+
+    //-------------------------------------
+    // pointers
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedZeroComplexFloat) 
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        UnsafeRawPointer(&_storedOneComplexFloat)
+    }
 }
+
+@usableFromInline var _storedZeroComplexFloat = Complex<Float>(0)
+@usableFromInline var _storedOneComplexFloat = Complex<Float>(1)
 
 //==============================================================================
 /// BufferElements
@@ -562,7 +865,7 @@ where Shape: TensorShape, TensorElement: StorageElement
                   tensor.storage,
                   tensor.storageBase,
                   tensor.order,
-                  tensor.stridedSpanCount)
+                  tensor.spanCount)
     }
     
     //--------------------------------------------------------------------------
@@ -580,7 +883,7 @@ where Shape: TensorShape, TensorElement: StorageElement
         _ storage: StorageBufferType,
         _ storageBase: Int,
         _ order: Order,
-        _ stridedSpanCount: Int
+        _ spanCount: Int
     ) {
         assert(shape.elementCount() == count, "shape count mismatch")
         self.alignment = TensorElement.alignment(storageBase)
@@ -589,7 +892,7 @@ where Shape: TensorShape, TensorElement: StorageElement
         self.order = order
         let (storedBase, storedCount) =
                 TensorElement.storedRange(start: storageBase,
-                                          count: stridedSpanCount)
+                                          count: spanCount)
         self.storedBase = storedBase
         self.storedCount = storedCount
         startIndex = Index(Shape.zero, 0)

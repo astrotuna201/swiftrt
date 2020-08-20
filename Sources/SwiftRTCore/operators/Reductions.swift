@@ -16,10 +16,6 @@
 import Numerics
 
 //==============================================================================
-// assert messages
-public let _messageTensorExtentsMismatch = "tensor shape mismatch"
-
-//==============================================================================
 /// all(x:along:)
 /// Returns `true` if all values are equal to `true` along the specified
 /// axes. Otherwise returns `false`. The result extent along the specified
@@ -114,7 +110,7 @@ public func sum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
 }
 
 @derivative(of: sum)
-@inlinable func _vjpSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement
 {
@@ -170,7 +166,7 @@ public extension Tensor where TensorElement.Value: Numeric {
 }
 
 @derivative(of: mean)
-@inlinable func _vjpMean<S,E>(
+@usableFromInline func _vjpMean<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
@@ -211,7 +207,7 @@ public extension Tensor where TensorElement.Value: AlgebraicField {
 }
 
 @derivative(of: prod)
-@inlinable func _vjpProd<S,E>(
+@usableFromInline func _vjpProd<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
@@ -252,7 +248,7 @@ public extension Tensor where TensorElement.Value: Numeric {
 }
 
 @derivative(of: prodNonZeros)
-@inlinable func _vjpProdNonZeros<S,E>(
+@usableFromInline func _vjpProdNonZeros<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
@@ -302,7 +298,7 @@ public extension Tensor where TensorElement.Value: Numeric {
 
 
 @derivative(of: min)
-@inlinable func _vjpMin<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpMin<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & Comparable
 {
@@ -346,7 +342,7 @@ public extension Tensor where TensorElement.Value: Comparable
 
 
 @derivative(of: max)
-@inlinable func _vjpMax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpMax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & Comparable
 {
@@ -386,7 +382,7 @@ public extension Tensor where TensorElement.Value: Comparable
 
 
 @derivative(of: absmax)
-@inlinable func _vjpAbsmax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpAbsmax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & SignedNumeric & Comparable
 {
@@ -422,7 +418,7 @@ public extension Tensor where TensorElement.Value: SignedNumeric & Comparable
 }
 
 @derivative(of: abssum)
-@inlinable func _vjpAbsSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpAbsSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & SignedNumeric & Comparable
 {
@@ -458,7 +454,7 @@ public extension Tensor where TensorElement.Value: SignedNumeric & Comparable {
 }
 
 @derivative(of: sqrtSumSquares)
-@inlinable func _vjpSqrtSumSquares<S,E>(
+@usableFromInline func _vjpSqrtSumSquares<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
