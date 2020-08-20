@@ -21,35 +21,51 @@ class test_Async: XCTestCase {
     //==========================================================================
     // support terminal test run
     static var allTests = [
-        ("test_add", test_add),
+        ("test_discreteMemoryReplication", test_discreteMemoryReplication),
+        ("test_multiQueueDependency", test_multiQueueDependency),
     ]
-    
-    // append and use a discreet async cpu device for these tests
+
+    // append and use a discrete async cpu device for these tests
     override func setUpWithError() throws {
-        Context.log.level = .diagnostic
-        // append a cpu device
-        let asyncDiscreetCpu = Context.devices.count
-        let logInfo = Context.local.platform.logInfo
-        let testDevice = CpuDevice(parent: logInfo, memoryType: .discreet,
-                                   id: asyncDiscreetCpu, queueMode: .async)
-        Context.local.platform.devices.append(testDevice)
-        use(device: asyncDiscreetCpu)
+//        Context.log.level = .diagnostic
+        Context.cpuQueueCount = 2
     }
-    
+
     override func tearDownWithError() throws {
-        Context.local.platform.devices.removeLast()
-        use(device: 0)
-        Context.log.level = .error
+//        Context.log.level = .error
     }
 
     //--------------------------------------------------------------------------
-    func test_add() {
-//        let a = array(0..<6)
-//        let b = array(0..<6)
-//        let c = a + b
-//
-//        // sync with caller
-//        let result = c.array
-//        XCTAssert(result == [0, 2, 4, 6, 8, 10])
+    func test_discreteMemoryReplication() {
+        let a = array([[0, 1], [2, 3], [4, 5]], name: "a")
+        let b = array([[0, 1], [2, 3], [4, 5]], name: "b")
+        let c: Tensor2 = using(device: Context.discreteMemoryDeviceId) {
+            let result = a + b
+            XCTAssert(a.storage.testLastAccessCopiedDeviceMemory)
+            XCTAssert(b.storage.testLastAccessCopiedDeviceMemory)
+            return result
+        }
+        let expected = c.array
+        XCTAssert(c.storage.testLastAccessCopiedDeviceMemory)
+        XCTAssert(expected == [[0, 2], [4, 6], [8, 10]])
+    }
+    
+    //--------------------------------------------------------------------------
+    func test_multiQueueDependency() {
+        let a = array([[0, 1], [2, 3], [4, 5]], name: "a")
+        
+        var c: Tensor2 = using(queue: 0) {
+            let b = array([[0, 1], [2, 3], [4, 5]], name: "b")
+            return a + b
+        }
+        c.name = "c"
+        
+        var d = using(queue: 1) {
+            a + c
+        }
+        d.name = "d"
+        
+        let result = d.array
+        XCTAssert(result == [[0.0, 3.0], [6.0, 9.0], [12.0, 15.0]])
     }
 }

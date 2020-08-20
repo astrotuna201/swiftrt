@@ -30,16 +30,20 @@ var testDependencies: [Target.Dependency] = ["SwiftRT"]
 var exclusions: [String] = ["*.gyb"]
 
 //==============================================================================
-// Cuda service module
+// Cuda platform module
 if buildCuda {
     //---------------------------------------
-    // add Cuda system module
-    products.append(.library(name: "CCuda", targets: ["CCuda"]))
-    coreDependencies.append("CCuda")
-    testDependencies.append("CCuda")
+    // add cuda modules
+    // they are currently combined into a single module to work around
+    // multi-module symbol conflicts
+    products.append(.library(name: "SwiftRTCuda", targets: ["SwiftRTCuda"]))
+    coreDependencies.append("SwiftRTCuda")
+    testDependencies.append("SwiftRTCuda")
 
-    targets.append(
-        .systemLibrary(name: "CCuda", path: "Modules/Cuda", pkgConfig: "cuda"))
+    targets.append(.systemLibrary(
+            name: "SwiftRTCuda",
+            path: "Modules/SwiftRTCuda",
+            pkgConfig: "cuda"))
 } else {
     exclusions.append("platform/cuda")
 }

@@ -40,6 +40,9 @@ class test_Vectorizing: XCTestCase {
     //--------------------------------------------------------------------------
     func test_perfAplusBSequential() {
         #if !DEBUG
+        // adding a queue causes change from sync to async by default
+        // overhead for this case is 28%
+//                Context.queuesPerDevice = 1
         let a = ones((1024, 1024))
         let b = ones((1024, 1024))
         var count: DType = 0
@@ -109,15 +112,16 @@ class test_Vectorizing: XCTestCase {
     func test_perfAplusB_NonSequential() {
         #if !DEBUG
         let size = 1024
-        let a = array(1...(size * size), (size, size))
-        let b = array(1...(size * size), (size, size), order: .F)
+        let a = array(0..<(size * (size * 2)), (size, size * 2))
+        let b = a[..., ..<size]
+        let c = a[..., size...]
         var count: DType = 0
         
         // 0.129
         // TODO: walk through this to improve if possible
         self.measure {
             for _ in 0..<10 {
-                let result = a + b
+                let result = b + c
                 count = result.first
             }
         }

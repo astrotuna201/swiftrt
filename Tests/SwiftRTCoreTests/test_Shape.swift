@@ -21,25 +21,30 @@ class test_Shape: XCTestCase {
     //==========================================================================
     // support terminal test run
     static var allTests = [
-        ("test_reshape", test_reshape),
-        ("test_reshapeOrder", test_reshapeOrder),
-        ("test_expanding", test_expanding),
-        ("test_squeeze", test_squeeze),
-        ("test_stack", test_stack),
-        ("test_stackingGradients", test_stackingGradients),
-        ("test_stackingExpression", test_stackingExpression),
-        ("test_perfTensor1", test_perfTensor1),
-        ("test_perfTensor2", test_perfTensor2),
-        ("test_perfRepeatedTensor3", test_perfRepeatedTensor3),
-        ("test_perfTensor3", test_perfTensor3),
-        ("test_perfTensor4", test_perfTensor4),
-        ("test_perfTensor5", test_perfTensor5),
-        ("test_initEmpty", test_initEmpty),
-        ("test_initRepeating", test_initRepeating),
-        ("test_initSingle", test_initSingle),
-        ("test_BufferIterableViews", test_BufferIterableViews),
-        ("test_transposed", test_transposed),
-        ("testTransposedPullback", testTransposedPullback),
+        // ("test_reshape", test_reshape),
+        ("test_reshapeOrderRowCol", test_reshapeOrderRowCol),
+        // ("test_reshapeOrderRowTC32x8", test_reshapeOrderRowTC32x8),
+        // ("test_reshapeOrderRowTC32x32", test_reshapeOrderRowTC32x32),
+        // ("test_expanding", test_expanding),
+        // ("test_expandMutate", test_expandMutate),
+        // ("test_repeatExpandTranspose", test_repeatExpandTranspose),
+        // ("test_stridePermutation", test_stridePermutation),
+        // ("test_squeeze", test_squeeze),
+        // ("test_stack", test_stack),
+        // ("test_stackingGradients", test_stackingGradients),
+        // ("test_stackingExpression", test_stackingExpression),
+        // ("test_perfTensor1", test_perfTensor1),
+        // ("test_perfTensor2", test_perfTensor2),
+        // ("test_perfRepeatedTensor3", test_perfRepeatedTensor3),
+        // ("test_perfTensor3", test_perfTensor3),
+        // ("test_perfTensor4", test_perfTensor4),
+        // ("test_perfTensor5", test_perfTensor5),
+        // ("test_initEmpty", test_initEmpty),
+        // ("test_initRepeating", test_initRepeating),
+        // ("test_initSingle", test_initSingle),
+        // ("test_BufferIterableViews", test_BufferIterableViews),
+        // ("test_transposed", test_transposed),
+        // ("testTransposedPullback", testTransposedPullback),
     ]
 
     //--------------------------------------------------------------------------
@@ -72,25 +77,143 @@ class test_Shape: XCTestCase {
     }
     
     //--------------------------------------------------------------------------
-    func test_reshapeOrder() {
+    func test_repeatExpandTranspose() {
+        let a = repeating(array(0...3, (4, 1, 1)), (4, 3, 4))
+        let b = repeating(expand(dims: array(0...3), axes: (0, 1)), (3, 4, 4))
+            .transposed(permutatedBy: Shape3(2, 0, 1))
+        XCTAssert(a == b)
+    }
+
+    //--------------------------------------------------------------------------
+    func test_stridePermutation() {
+        let maxj = 20
+        let maxi = 20
+        let maxk =  8
+
+        let vec = array([0, 0, 0, 10, 10, 10, 10, 10, 10, 10,
+                         10, 10, 10, 10, 10, 10, 10, 0, 0, 0])
+        let ts = repeating(expand(dims: vec, axes: (0,1,3)), (2, maxj, maxi, maxk))
+        XCTAssert(ts[0, ..., ..., 0].count == (maxj * maxi))
+
+        let s = ts[0, 0..<maxj, 0..<maxi, 0..<maxk]
+        let tp = s.transposed(permutatedBy: [3, 1, 2, 0])
+        let test = squeeze(tp, axis: 3)
+
+        //Below breaks in DiscreteStorage assert
+        XCTAssert(test[7] == [[
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0],
+            [0, 0, 0, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 0, 0, 0]
+        ]])
+    }
+
+    //--------------------------------------------------------------------------
+    // bug repro from user
+    func test_expandMutate() {
+        let maxi = 8
+        let maxj = 8
+        var drag = repeating(0, (2, maxj + 2, maxi + 2))
+        let idxoffset1 = 6
+        let idxoffset2 = 2
+        let data = repeating(array([1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0], (1, maxi + 1)), ((idxoffset1-idxoffset2), maxi + 1))
+        drag[1, (maxj - idxoffset1)..<(maxj - idxoffset2), 0...maxi] = expand(dims: data, axis: 0)
+        drag[0, (maxj - idxoffset1)..<(maxj - idxoffset2), 0...maxi] = drag[1, (maxj - idxoffset1)..<(maxj - idxoffset2), 0...maxi]
+        XCTAssert(drag == [[
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        ],
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [1.5, 9.0, 9.0, 9.0, 9.0, 9.0, 9.0, 1.5, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        ]])
+    }
+    
+    //--------------------------------------------------------------------------
+    func test_reshapeOrderRowCol() {
+        
 //        Context.log.level = .diagnostic
         let a = array([[0, 1, 2], [3, 4, 5]])
-        XCTAssert(Array(a.storage.read(type: DType.self, at: 0, count: a.count))
-                    == [0, 1, 2, 3, 4, 5])
+        XCTAssert(a.flatArray == [0, 1, 2, 3, 4, 5])
 
         let b = reshape(a, (2, 3), order: .col)
         XCTAssert(b == [[0, 1, 2], [3, 4, 5]])
-        XCTAssert(Array(b.storage.read(type: DType.self, at: 0, count: b.count))
-                    == [0, 3, 1, 4, 2, 5])
+        XCTAssert(b.flatArray == [0, 3, 1, 4, 2, 5])
         
         let c = array([[0, 3, 1], [4, 2, 5]], order: .col)
-        XCTAssert(Array(c.storage.read(type: DType.self, at: 0, count: c.count))
-                    == [0, 3, 1, 4, 2, 5])
+        XCTAssert(c.flatArray == [0, 3, 1, 4, 2, 5])
 
         let d = reshape(c, (2, 3))
         XCTAssert(d == [[0, 1, 2], [3, 4, 5]])
-        XCTAssert(Array(d.storage.read(type: DType.self, at: 0, count: d.count))
-                    == [0, 1, 2, 3, 4, 5])
+        XCTAssert(d.flatArray == [0, 1, 2, 3, 4, 5])
+    }
+    
+    //--------------------------------------------------------------------------
+    func test_reshapeOrderRowTC32x8() {
+//        Context.log.level = .diagnostic
+        let a = array([[0, 1, 2], [3, 4, 5]])
+        XCTAssert(a.flatArray == [0, 1, 2, 3, 4, 5])
+
+        let b = reshape(a, (2, 3), order: .col)
+        XCTAssert(b == [[0, 1, 2], [3, 4, 5]])
+        XCTAssert(b.flatArray == [0, 3, 1, 4, 2, 5])
+        
+        let c = array([[0, 3, 1], [4, 2, 5]], order: .col)
+        XCTAssert(c.flatArray == [0, 3, 1, 4, 2, 5])
+
+        let d = reshape(c, (2, 3))
+        XCTAssert(d == [[0, 1, 2], [3, 4, 5]])
+        XCTAssert(d.flatArray == [0, 1, 2, 3, 4, 5])
+    }
+    
+    //--------------------------------------------------------------------------
+    func test_reshapeOrderRowTC32x32() {
+//        Context.log.level = .diagnostic
+        let a = array([[0, 1, 2], [3, 4, 5]])
+        XCTAssert(a.flatArray == [0, 1, 2, 3, 4, 5])
+
+        let b = reshape(a, (2, 3), order: .col)
+        XCTAssert(b == [[0, 1, 2], [3, 4, 5]])
+        XCTAssert(b.flatArray == [0, 3, 1, 4, 2, 5])
+        
+        let c = array([[0, 3, 1], [4, 2, 5]], order: .col)
+        XCTAssert(c.flatArray == [0, 3, 1, 4, 2, 5])
+
+        let d = reshape(c, (2, 3))
+        XCTAssert(d == [[0, 1, 2], [3, 4, 5]])
+        XCTAssert(d.flatArray == [0, 1, 2, 3, 4, 5])
     }
     
     //--------------------------------------------------------------------------
@@ -215,12 +338,12 @@ class test_Shape: XCTestCase {
         let a = ones(1024 * 1024)
         var count: DType = 0
         self.measure {
-            count = a.reduce(into: 0) { $0 += $1 }
+            count = a.sum().element
         }
         XCTAssert(count > 0)
         #endif
     }
-        
+    
     //--------------------------------------------------------------------------
     func test_perfTensor2() {
         #if !DEBUG
@@ -229,7 +352,7 @@ class test_Shape: XCTestCase {
         
         // 0.001s
         self.measure {
-            count = a.reduce(into: 0) { $0 += $1 }
+            count = a.sum().element
         }
         XCTAssert(count > 0)
         #endif
@@ -241,7 +364,7 @@ class test_Shape: XCTestCase {
         let a = repeating(1, (64, 128, 128))
         var count: DType = 0
         self.measure {
-            count = a.reduce(into: 0) { $0 += $1 }
+            count = a.sum().element
         }
         XCTAssert(count > 0)
         #endif
@@ -253,7 +376,7 @@ class test_Shape: XCTestCase {
         let a = ones((64, 128, 128))
         var count: DType = 0
         self.measure {
-            count = a.reduce(into: 0) { $0 += $1 }
+            count = a.sum().element
         }
         XCTAssert(count > 0)
         #endif
@@ -265,7 +388,7 @@ class test_Shape: XCTestCase {
         let a = ones((2, 32, 128, 128))
         var count: DType = 0
         self.measure {
-            count = a.reduce(into: 0) { $0 += $1 }
+            count = a.sum().element
         }
         XCTAssert(count > 0)
         #endif
@@ -277,7 +400,7 @@ class test_Shape: XCTestCase {
         let a = ones((2, 2, 16, 128, 128))
         var count: DType = 0
         self.measure {
-            count = a.reduce(into: 0) { $0 += $1 }
+            count = a.sum().element
         }
         XCTAssert(count > 0)
         #endif
@@ -289,7 +412,7 @@ class test_Shape: XCTestCase {
         var count: DType = 0
         self.measure {
             for _ in 0..<100000 {
-                let a = Tensor2(Shape2(2, 5))
+                let a = Tensor2(shape: Shape2(2, 5))
                 count = a.first
             }
         }

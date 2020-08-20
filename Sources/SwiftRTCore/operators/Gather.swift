@@ -29,7 +29,7 @@ where S: TensorShape
     let axis = axis < 0 ? axis + S.rank : axis
     var shape = tensor.shape
     shape[axis] = indices.count
-    var result = Tensor<S,E>(shape, layout: tensor.layout)
+    var result = Tensor<S,E>(shape: shape, order: tensor.order)
     var rlower = S.zero, tlower = S.zero
     var rupper = tensor.shape, tupper = tensor.shape
     for (ri, ti) in indices.enumerated() {
@@ -44,7 +44,7 @@ where S: TensorShape
 
 // TODO: get this verified
 @derivative(of: gather)
-@inlinable func _vjpGather<S,E>(
+@usableFromInline func _vjpGather<S,E>(
     from tensor: Tensor<S,E>,
     indices: TensorR1<DeviceIndex>,
     axis: Int = 0
@@ -55,7 +55,7 @@ where S: TensorShape, E.Value: DifferentiableElement
     let value = gather(from: tensor, indices: indices, axis: axis)
     let shape = tensor.shape
     return (value, {
-        var result = Tensor<S,E>(zeros: shape, layout: tensor.layout)
+        var result = Tensor<S,E>(zeros: shape, order: tensor.order)
         var rlower = S.zero, tlower = S.zero
         var rupper = shape, tupper = shape
         for (ti, ri) in indices.enumerated() {

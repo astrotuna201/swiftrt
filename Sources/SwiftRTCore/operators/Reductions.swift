@@ -16,10 +16,6 @@
 import Numerics
 
 //==============================================================================
-// assert messages
-public let _messageTensorExtentsMismatch = "tensor shape mismatch"
-
-//==============================================================================
 /// all(x:along:)
 /// Returns `true` if all values are equal to `true` along the specified
 /// axes. Otherwise returns `false`. The result extent along the specified
@@ -33,12 +29,12 @@ public let _messageTensorExtentsMismatch = "tensor shape mismatch"
 ) -> Tensor<S,Bool> where S: TensorShape {
     if let axes = axes {
         let resultShape = x.reductionShape(alongAxes: axes)
-        var result = Tensor<S,Bool>(resultShape)
+        var result = Tensor<S,Bool>(shape: resultShape)
         copy(from: x[S.zero, resultShape], to: &result)
-        Context.currentQueue.reduce(x, &result, .compare, { $0 && $1 }, nil)
+        Context.currentQueue.reduce("all", x, &result, .compare, { $0 && $1 }, nil)
         return result
     } else {
-        var result = Tensor<S,Bool>(S.one)
+        var result = Tensor<S,Bool>(shape: S.one)
         Context.currentQueue.reduceAll(x, &result)
         return result
     }
@@ -69,12 +65,12 @@ public func any<S>(_ x: Tensor<S,Bool>, alongAxes axes: Set<Int>? = nil)
 {
     if let axes = axes {
         let resultShape = x.reductionShape(alongAxes: axes)
-        var result = Tensor<S,Bool>(resultShape)
+        var result = Tensor<S,Bool>(shape: resultShape)
         copy(from: x[S.zero, resultShape], to: &result)
-        Context.currentQueue.reduce(x, &result, .compare, { $0 || $1 }, nil)
+        Context.currentQueue.reduce("any", x, &result, .compare, { $0 || $1 }, nil)
         return result
     } else {
-        var result = Tensor<S,Bool>(S.one)
+        var result = Tensor<S,Bool>(shape: S.one)
         Context.currentQueue.reduceAny(x, &result)
         return result
     }
@@ -104,17 +100,17 @@ public func sum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     if let axes = axes {
         let resultShape = x.reductionShape(alongAxes: axes)
         var result = Tensor<S,E>(zeros: resultShape)
-        Context.currentQueue.reduce(x, &result, .add, +, nil)
+        Context.currentQueue.reduce("sum", x, &result, .add, +, nil)
         return result
     } else {
-        var result = Tensor<S,E>(S.one)
+        var result = Tensor<S,E>(shape: S.one)
         Context.currentQueue.reduceSum(x, &result)
         return result
     }
 }
 
 @derivative(of: sum)
-@inlinable func _vjpSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement
 {
@@ -160,17 +156,17 @@ public extension Tensor where TensorElement.Value: Numeric {
         })
         
         var result = Tensor<S,E>(zeros: x.reductionShape(alongAxes: axes))
-        Context.currentQueue.reduce(x, &result, .add, +, { $0 / divisor })
+        Context.currentQueue.reduce("mean", x, &result, .add, +, { $0 / divisor })
         return result
     } else {
-        var result = Tensor<S,E>(S.one)
+        var result = Tensor<S,E>(shape: S.one)
         Context.currentQueue.reduceMean(x, &result)
         return result
     }
 }
 
 @derivative(of: mean)
-@inlinable func _vjpMean<S,E>(
+@usableFromInline func _vjpMean<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
@@ -206,12 +202,12 @@ public extension Tensor where TensorElement.Value: AlgebraicField {
 ) -> Tensor<S,E> where S: TensorShape, E.Value: Numeric
 {
     var result = Tensor<S,E>(zeros: x.reductionShape(alongAxes: axes))
-    Context.currentQueue.reduce(x, &result, .mul, { $0 * $1 }, nil)
+    Context.currentQueue.reduce("prod", x, &result, .mul, { $0 * $1 }, nil)
     return result
 }
 
 @derivative(of: prod)
-@inlinable func _vjpProd<S,E>(
+@usableFromInline func _vjpProd<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
@@ -246,13 +242,13 @@ public extension Tensor where TensorElement.Value: Numeric {
 ) -> Tensor<S,E> where S: TensorShape, E.Value: Numeric
 {
     var result = Tensor<S,E>(zeros: x.reductionShape(alongAxes: axes))
-    Context.currentQueue.reduce(x, &result, .mulNonZeros,
+    Context.currentQueue.reduce("prodNonZeros", x, &result, .mulNonZeros,
                                 { $1 == 0 ? $0 : $0 * $1 }, nil)
     return result
 }
 
 @derivative(of: prodNonZeros)
-@inlinable func _vjpProdNonZeros<S,E>(
+@usableFromInline func _vjpProdNonZeros<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
@@ -289,12 +285,12 @@ public extension Tensor where TensorElement.Value: Numeric {
 ) -> Tensor<S,E> where S: TensorShape, E.Value: Comparable
 {
     if let axes = axes {
-        var result = Tensor<S,E>(x.reductionShape(alongAxes: axes))
+        var result = Tensor<S,E>(shape: x.reductionShape(alongAxes: axes))
         copy(from: x[S.zero, result.shape], to: &result)
-        Context.currentQueue.reduce(x, &result, .min, { Swift.min($0,$1) }, nil)
+        Context.currentQueue.reduce("min", x, &result, .min, { Swift.min($0,$1) }, nil)
         return result
     } else {
-        var result = Tensor<S,E>(S.one)
+        var result = Tensor<S,E>(shape: S.one)
         Context.currentQueue.reduceMin(x, &result)
         return result
     }
@@ -302,7 +298,7 @@ public extension Tensor where TensorElement.Value: Numeric {
 
 
 @derivative(of: min)
-@inlinable func _vjpMin<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpMin<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & Comparable
 {
@@ -333,12 +329,12 @@ public extension Tensor where TensorElement.Value: Comparable
 ) -> Tensor<S,E> where S: TensorShape, E.Value: Comparable
 {
     if let axes = axes {
-        var result = Tensor<S,E>(x.reductionShape(alongAxes: axes))
+        var result = Tensor<S,E>(shape: x.reductionShape(alongAxes: axes))
         copy(from: x[S.zero, result.shape], to: &result)
-        Context.currentQueue.reduce(x, &result, .max, { Swift.max($0,$1) }, nil)
+        Context.currentQueue.reduce("max", x, &result, .max, { Swift.max($0,$1) }, nil)
         return result
     } else {
-        var result = Tensor<S,E>(S.one)
+        var result = Tensor<S,E>(shape: S.one)
         Context.currentQueue.reduceMax(x, &result)
         return result
     }
@@ -346,7 +342,7 @@ public extension Tensor where TensorElement.Value: Comparable
 
 
 @derivative(of: max)
-@inlinable func _vjpMax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpMax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & Comparable
 {
@@ -376,9 +372,9 @@ public extension Tensor where TensorElement.Value: Comparable
     alongAxes axes: Set<Int>? = nil
 ) -> Tensor<S,E> where S: TensorShape, E.Value: SignedNumeric & Comparable
 {
-    var result = Tensor<S,E>(x.reductionShape(alongAxes: axes))
+    var result = Tensor<S,E>(shape: x.reductionShape(alongAxes: axes))
     copy(from: x[S.zero, result.shape], to: &result)
-    Context.currentQueue.reduce(x, &result, .amax, {
+    Context.currentQueue.reduce("absmax", x, &result, .amax, {
         Swift.max(Swift.abs($0), Swift.abs($1))
     }, nil)
     return result
@@ -386,7 +382,7 @@ public extension Tensor where TensorElement.Value: Comparable
 
 
 @derivative(of: absmax)
-@inlinable func _vjpAbsmax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpAbsmax<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & SignedNumeric & Comparable
 {
@@ -417,12 +413,12 @@ public extension Tensor where TensorElement.Value: SignedNumeric & Comparable
 ) -> Tensor<S,E> where S: TensorShape, E.Value: SignedNumeric & Comparable
 {
     var result = Tensor<S,E>(zeros: x.reductionShape(alongAxes: axes))
-    Context.currentQueue.reduce(x, &result, .asum, { $0 + Swift.abs($1) }, nil)
+    Context.currentQueue.reduce("abssum", x, &result, .asum, { $0 + Swift.abs($1) }, nil)
     return result
 }
 
 @derivative(of: abssum)
-@inlinable func _vjpAbsSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
+@usableFromInline func _vjpAbsSum<S,E>(_ x: Tensor<S,E>, alongAxes axes: Set<Int>? = nil)
     -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)
     where S: TensorShape, E.Value: DifferentiableElement & SignedNumeric & Comparable
 {
@@ -452,13 +448,13 @@ public extension Tensor where TensorElement.Value: SignedNumeric & Comparable {
 ) -> Tensor<S,E> where S: TensorShape, E.Value: Real
 {
     var result = Tensor<S,E>(zeros: x.reductionShape(alongAxes: axes))
-    Context.currentQueue.reduce(x, &result, .sqrtSumSquares,
+    Context.currentQueue.reduce("sqrtSumSquares", x, &result, .sqrtSumSquares,
                         { $0 + $1 * $1 }, { .sqrt($0) })
     return result
 }
 
 @derivative(of: sqrtSumSquares)
-@inlinable func _vjpSqrtSumSquares<S,E>(
+@usableFromInline func _vjpSqrtSumSquares<S,E>(
     _ x: Tensor<S,E>,
     alongAxes axes: Set<Int>? = nil
 ) -> (value: Tensor<S,E>, pullback: (Tensor<S,E>) -> Tensor<S,E>)

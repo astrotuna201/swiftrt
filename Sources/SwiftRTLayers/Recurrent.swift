@@ -27,7 +27,7 @@ public struct RNNCellInput<Input: Differentiable, State: Differentiable>:
     public var input: Input
     /// The previous state.
     public var state: State
-    
+
     @differentiable
     public init(input: Input, state: State) {
         self.input = input
@@ -48,7 +48,7 @@ public struct RNNCellOutput<Output: Differentiable, State: Differentiable>:
     public var output: Output
     /// The current state.
     public var state: State
-    
+
     @differentiable
     public init(output: Output, state: State) {
         self.output = output
@@ -72,7 +72,7 @@ where Input == RNNCellInput<TimeStepInput, State>,
     associatedtype TimeStepOutput: Differentiable
     /// The state that may be preserved across time steps.
     associatedtype State: Differentiable
-    
+
     /// Returns a zero-valued state with a shape compatible to the input
     func zeroState(for input: TimeStepInput) -> State
 }
@@ -93,7 +93,7 @@ extension RecurrentLayerCell {
     ) -> RNNCellOutput<TimeStepOutput, State> {
         self(RNNCellInput(input: input, state: state))
     }
-    
+
     @differentiable
     @inlinable public func call(
         input: TimeStepInput,
@@ -107,40 +107,18 @@ extension RecurrentLayerCell {
 /// A basic RNN cell.
 public struct BasicRNNCell<Element>: RecurrentLayerCell
 where Element: StorageElement,
-      Element.Value: DifferentiableElement & Real & BinaryFloatingPoint
+      Element.Value: StorageElement & DifferentiableElement &
+        Real & BinaryFloatingPoint
 {
     public var weight: TensorR2<Element>
     public var bias: TensorR2<Element>
 
-    // TODO(TF-507): Revert to `typealias State = Tensor<Scalar>` after SR-10697 is fixed.
-    public struct State:
-    Equatable, Differentiable, VectorProtocol, KeyPathIterable
-    {
-        @inlinable public func adding(_ x: Element.Value) -> Self {
-            State(value + x)
-        }
-        
-        @inlinable public func subtracting(_ x: Element.Value) -> Self {
-            State(value - x)
-        }
-        
-        @inlinable public func scaled(by scalar: Element.Value) -> Self {
-            State(value * scalar)
-        }
-        
-        public typealias VectorSpaceScalar = Element.Value
-        public var value: TensorR2<Element>
-        @differentiable
-        @inlinable public init(_ value: TensorR2<Element>) {
-            self.value = value
-        }
-    }
-
-    public typealias TimeStepInput = TensorR2<Element>
+    public typealias State = TensorR2<Element>
+    public typealias TimeStepInput = State
     public typealias TimeStepOutput = State
     public typealias Input = RNNCellInput<TimeStepInput, State>
     public typealias Output = RNNCellOutput<TimeStepOutput, State>
-    
+
     //--------------------------------------------------------------------------
     /// Creates a `BasicRNNCell` with the specified input size and
     /// hidden state size.
@@ -159,15 +137,15 @@ where Element: StorageElement,
         // TODO: not sure if row or column
         self.bias = TensorR2(zeros: Shape2(1, hiddenSize))
     }
-    
+
     //--------------------------------------------------------------------------
     /// Returns a zero-valued state with shape compatible with the provided input.
     @inlinable public func zeroState(
         for input: TensorR2<Element>
     ) -> State {
-        State(TensorR2<Element>(zeros: Shape2(input.shape[0], weight.shape[1])))
+        TensorR2<Element>(zeros: Shape2(input.shape[0], weight.shape[1]))
     }
-    
+
     //--------------------------------------------------------------------------
     /// Returns the output obtained from applying the layer to the given input.
     ///
@@ -176,8 +154,8 @@ where Element: StorageElement,
     @differentiable
     @inlinable public func callAsFunction(_ input: Input) -> Output {
         let concatenatedInput = input.input
-                .concatenated(with: input.state.value, alongAxis: 1)
-        let newState = State(tanh(matmul(concatenatedInput, weight) + bias))
+                .concatenated(with: input.state, alongAxis: 1)
+        let newState = tanh(matmul(concatenatedInput, weight) + bias)
         return Output(output: newState, state: newState)
     }
 }
@@ -186,7 +164,8 @@ where Element: StorageElement,
 /// An LSTM cell.
 public struct LSTMCell<Element>: RecurrentLayerCell
 where Element: StorageElement,
-      Element.Value: DifferentiableElement & Real & BinaryFloatingPoint
+      Element.Value: StorageElement & DifferentiableElement &
+        Real & BinaryFloatingPoint
 {
     // types
     public typealias TimeStepInput = TensorR2<Element>
@@ -194,12 +173,12 @@ where Element: StorageElement,
     public typealias Input = RNNCellInput<TimeStepInput, State>
     public typealias Output = RNNCellOutput<TimeStepOutput, State>
     public enum Part: Int, CaseIterable { case input, update, forget, output }
-    
+
     // properties
     public var fusedWeight: TensorR2<Element>
     public var fusedBias: TensorR1<Element>
     @noDerivative public let hiddenSize: Int
-    
+
     //--------------------------------------------------------------------------
     /// Creates a `LSTMCell` with the specified input size and hidden state size.
     ///
@@ -212,7 +191,7 @@ where Element: StorageElement,
         self.fusedWeight =
             Tensor(glorotUniform: [inputSize + hiddenSize, 4 * hiddenSize])
     }
-    
+
     //--------------------------------------------------------------------------
     /// part
     /// used to access parts of the fused weights
@@ -222,7 +201,7 @@ where Element: StorageElement,
     {
         fused[0..., (i.rawValue * hiddenSize)..<((i.rawValue + 1) * hiddenSize)]
     }
-    
+
     /// part
     /// used to access parts of the fused bias
     @differentiable
@@ -231,7 +210,7 @@ where Element: StorageElement,
     {
         fused[(i.rawValue * hiddenSize)..<((i.rawValue + 1) * hiddenSize)]
     }
-    
+
     //--------------------------------------------------------------------------
     public struct State:
         Equatable, Differentiable, VectorProtocol, KeyPathIterable
@@ -240,33 +219,33 @@ where Element: StorageElement,
         public func adding(_ x: Element.Value) -> Self {
             State(cell: cell + x, hidden: hidden + x)
         }
-        
+
         public func subtracting(_ x: Element.Value) -> Self {
             State(cell: cell - x, hidden: hidden - x)
         }
-        
+
         public func scaled(by scalar: Element.Value) -> Self {
             State(cell: cell * scalar, hidden: hidden * scalar)
-        }        
-        
+        }
+
         public typealias VectorSpaceScalar = Element.Value
         public var cell: TensorR2<Element>
         public var hidden: TensorR2<Element>
-        
+
         @differentiable
         @inlinable public init(cell: TensorR2<Element>, hidden: TensorR2<Element>) {
             self.cell = cell
             self.hidden = hidden
         }
     }
-    
+
     //--------------------------------------------------------------------------
     /// Returns a zero-valued state with shape compatible with the provided input.
     @inlinable public func zeroState(for input: TensorR2<Element>) -> State {
         let shape = Shape2(input.shape[0], hiddenSize)
         return State(cell: Tensor(zeros: shape), hidden: Tensor(zeros: shape))
     }
-    
+
     //--------------------------------------------------------------------------
     /// Returns the output obtained from applying the layer to the given input
     /// - Parameter input: The input to the layer.
@@ -290,30 +269,32 @@ where Element: StorageElement,
 /// An GRU cell.
 public struct GRUCell<Element>: RecurrentLayerCell
 where Element: StorageElement,
-      Element.Value: DifferentiableElement & Real & BinaryFloatingPoint
+      Element.Value: StorageElement & DifferentiableElement &
+        Real & BinaryFloatingPoint
 {
     public var updateWeight1, updateWeight2: TensorR2<Element>
     public var resetWeight1, resetWeight2: TensorR2<Element>
     public var outputWeight1, outputWeight2: TensorR2<Element>
     public var updateBias, outputBias, resetBias: TensorR1<Element>
-    
+
     @noDerivative public var stateShape: Shape2 {
         Shape2(1, updateWeight1.shape[0])
     }
-    
+
     //--------------------------------------------------------------------------
     /// Returns a zero-valued state with shape compatible with the provided input.
     public func zeroState(
         for input: TensorR2<Element>
     ) -> State {
-        State(hidden: TensorR2<Element>(zeros: stateShape))
+        TensorR2<Element>(zeros: stateShape)
     }
-    
-    public typealias TimeStepInput = TensorR2<Element>
+
+    public typealias State = TensorR2<Element>
+    public typealias TimeStepInput = State
     public typealias TimeStepOutput = State
     public typealias Input = RNNCellInput<TimeStepInput, State>
     public typealias Output = RNNCellOutput<TimeStepOutput, State>
-    
+
     /// Creates a `GRUCell` with the specified input size and hidden state size.
     ///
     /// - Parameters:
@@ -337,31 +318,7 @@ where Element: StorageElement,
         self.outputWeight2 = weightInitializer(gateWeightShape)
         self.outputBias = biasInitializer(gateBiasShape)
     }
-    
-    // TODO(TF-507): Revert to `typealias State = Tensor<Scalar>` after
-    // SR-10697 is fixed.
-    public struct State: Equatable, Differentiable, VectorProtocol, KeyPathIterable {
-        public func adding(_ x: Element.Value) -> Self {
-            State(hidden: hidden + x)
-        }
-        
-        public func subtracting(_ x: Element.Value) -> Self {
-            State(hidden: hidden - x)
-        }
-        
-        public func scaled(by scalar: Element.Value) -> Self {
-            State(hidden: hidden * scalar)
-        }
-        
-        public typealias VectorSpaceScalar = Element.Value
-        public var hidden: TensorR2<Element>
-        
-        @differentiable
-        public init(hidden: TensorR2<Element>) {
-            self.hidden = hidden
-        }
-    }
-    
+
     /// Returns the output obtained from applying the layer to the given input.
     ///
     /// - Parameter input: The input to the layer.
@@ -370,19 +327,16 @@ where Element: StorageElement,
     public func callAsFunction(_ input: Input) -> Output {
         let resetGate = sigmoid(
             matmul(input.input, resetWeight1) +
-                matmul(input.state.hidden, resetWeight2, bias: resetBias))
-        
+                matmul(input.state, resetWeight2, bias: resetBias))
         let updateGate = sigmoid(
                 matmul(input.input, updateWeight1) +
-                    matmul(input.state.hidden, updateWeight2, bias: updateBias))
-        
+                    matmul(input.state, updateWeight2, bias: updateBias))
         let outputGate = tanh(
                 matmul(input.input, outputWeight1, bias: outputBias) +
-                    matmul(resetGate * input.state.hidden, outputWeight2))
-        
-        let updateHidden = (1 - updateGate) * input.state.hidden
+                    matmul(resetGate * input.state, outputWeight2))
+        let updateHidden = (1 - updateGate) * input.state
         let updateOutput = (1 - updateGate) * outputGate
-        let newState = State(hidden: updateHidden + updateOutput)
+        let newState = updateHidden + updateOutput
         return Output(output: newState, state: newState)
     }
 }
@@ -391,13 +345,13 @@ where Element: StorageElement,
 public struct RecurrentLayer<Cell: RecurrentLayerCell>: Layer {
     public typealias Input = [Cell.TimeStepInput]
     public typealias Output = [Cell.TimeStepOutput]
-    
+
     public var cell: Cell
-    
+
     public init(_ cell: @autoclosure () -> Cell) {
         self.cell = cell()
     }
-    
+
     @differentiable(wrt: (self, inputs, initialState))
     public func callAsFunction(
         _ inputs: [Cell.TimeStepInput],
@@ -413,7 +367,7 @@ public struct RecurrentLayer<Cell: RecurrentLayerCell>: Layer {
         }
         return timeStepOutputs
     }
-    
+
     @differentiable(wrt: (self, inputs, initialState))
     public func call(
         _ inputs: [Cell.TimeStepInput],
@@ -421,10 +375,9 @@ public struct RecurrentLayer<Cell: RecurrentLayerCell>: Layer {
     ) -> [Cell.TimeStepOutput] {
         callAsFunction(inputs, initialState: initialState)
     }
-    
-    @usableFromInline
+
     @derivative(of: callAsFunction, wrt: (self, inputs, initialState))
-    internal func _vjpCallAsFunction(
+    @usableFromInline func _vjpCallAsFunction(
         _ inputs: [Cell.TimeStepInput],
         initialState: Cell.State
     ) -> (
@@ -465,13 +418,13 @@ public struct RecurrentLayer<Cell: RecurrentLayerCell>: Layer {
             }
         )
     }
-    
+
     @differentiable
     public func callAsFunction(_ inputs: [Cell.TimeStepInput]) -> [Cell.TimeStepOutput] {
         let initialState = withoutDerivative(at: cell.zeroState(for: inputs[0]))
         return self(inputs, initialState: initialState)
     }
-    
+
     @differentiable(wrt: (self, inputs, initialState))
     public func lastOutput(
         from inputs: [Cell.TimeStepInput],
@@ -480,7 +433,7 @@ public struct RecurrentLayer<Cell: RecurrentLayerCell>: Layer {
         precondition(!inputs.isEmpty, "'inputs' must be non-empty.")
         return self(inputs, initialState: initialState)[withoutDerivative(at: inputs.count - 1)]
     }
-    
+
     @differentiable(wrt: (self, inputs))
     public func lastOutput(from inputs: [Cell.TimeStepInput]) -> Cell.TimeStepOutput {
         precondition(!inputs.isEmpty, "'inputs' must be non-empty.")
@@ -495,12 +448,12 @@ extension RecurrentLayer: AdditiveArithmetic where Cell: AdditiveArithmetic {}
 
 public typealias BasicRNN<Element> = RecurrentLayer<BasicRNNCell<Element>>
 where Element: StorageElement,
-      Element.Value: Real & BinaryFloatingPoint & DifferentiableElement
+      Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableElement
 
 public typealias LSTM<Element> = RecurrentLayer<LSTMCell<Element>>
     where Element: StorageElement,
-          Element.Value: Real & BinaryFloatingPoint & DifferentiableElement
+          Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableElement
 
 public typealias GRU<Element> = RecurrentLayer<GRUCell<Element>>
     where Element: StorageElement,
-          Element.Value: Real & BinaryFloatingPoint & DifferentiableElement
+          Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableElement

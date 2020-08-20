@@ -51,7 +51,7 @@ import Foundation
 {
     let axis = axis < 0 ? axis + S.rank : axis
     var result = withoutDerivative(
-            at: Tensor<S,E>(concatenatedShape(tensors,axis)))
+            at: Tensor<S,E>(shape: concatenatedShape(tensors,axis)))
     concatenate(tensors, axis: axis, into: &result)
     return result
 }
@@ -92,7 +92,7 @@ public extension Tensor {
 //==============================================================================
 // vjpConcat
 @derivative(of: concatenate)
-func vjpConcat<S,E>(
+@inlinable func vjpConcat<S,E>(
     _ tensors: [Tensor<S,E>],
     axis: Int = 0,
     into result: inout Tensor<S,E>
@@ -125,7 +125,7 @@ where S: TensorShape
         // - This makes `resultTangent` not be inout, so we don't need to set
         //   it any more.
         resultTangent = Tensor(zeros: resultTangent.shape,
-                               layout: resultTangent.layout)
+                               order: resultTangent.order)
 
         return Array.DifferentiableView(tensorTangents)
     }
@@ -140,7 +140,7 @@ where S: TensorShape
 @inlinable public func copy<S,E>(
     from source: Tensor<S,E>,
     to destination: inout Tensor<S,E>
-) where S: TensorShape
+)
 {
     Context.currentQueue.copy(from: source, to: &destination)
 }

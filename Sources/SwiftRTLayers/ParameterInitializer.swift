@@ -34,7 +34,7 @@ public func constantInitializer<S,E>(
     value: E.Value
 ) -> ParameterInitializer<S,E> where S: TensorShape {
     {
-        var tensor = Tensor<S,E>($0)
+        var tensor = Tensor<S,E>(shape: $0)
         fill(&tensor, with: value)
         return tensor
     }
@@ -48,7 +48,7 @@ public func constantInitializer<S,E>(value: Tensor<S,E>)
     {
         guard value.count < $0.elementCount() else { return value }
         // parameters are inherently mutated, so the storage should be dense
-        var tensor = Tensor<S,E>($0)
+        var tensor = Tensor<S,E>(shape: $0)
         copy(from: Tensor<S,E>(repeating: value, to: $0), to: &tensor)
         return tensor
     }
@@ -150,7 +150,7 @@ where S: TensorShape, E.Value: Real & BinaryFloatingPoint
 public func truncatedNormalInitializer<S,E>(
     mean: Tensor<S,E>? = nil,
     std: Tensor<S,E>? = nil,
-    layout: Layout = Layout.defaultValue,
+    order: Order = .defaultOrder,
     seed: RandomSeed = Context.randomSeed
 ) -> ParameterInitializer<S,E>
 where S: TensorShape, E.Value: Real & BinaryFloatingPoint
@@ -158,9 +158,9 @@ where S: TensorShape, E.Value: Real & BinaryFloatingPoint
     {
         // TODO: which element init is being called??
         Tensor<S,E>(randomTruncatedNormal: $0,
-                    mean: mean ?? Tensor<S,E>(0, layout: layout),
-                    std: std ?? Tensor<S,E>(1, layout: layout),
-                    layout: layout,
+                    mean: mean ?? Tensor<S,E>(0, order: order),
+                    std: std ?? Tensor<S,E>(1, order: order),
+                    order: order,
                     seed: seed)
     }
 }

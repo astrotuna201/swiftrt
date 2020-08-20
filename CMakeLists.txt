@@ -1,10 +1,19 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.5)
+
+# This must come before the `project` declaration
+# we specify less than clang 10 because nvcc doesn't support v10 yet
+# Hmm declaring this AND setting the Vscode kit to clang 9 causes an
+# infinite loop in the cmake generator.
+#
+#set(CMAKE_C_COMPILER "/usr/lib/llvm-9/bin/clang")
+#set(CMAKE_CXX_COMPILER "/usr/lib/llvm-9/bin/clang")
+
 project(swiftrt)
 
 #####################
 # output directories
 string(TOLOWER "${CMAKE_BUILD_TYPE}" SWIFT_BUILD_TYPE)
-set(TARGET_DIR ${CMAKE_SOURCE_DIR}/.build/${SWIFT_BUILD_TYPE})
+set(TARGET_DIR ${PROJECT_SOURCE_DIR}/.build/${SWIFT_BUILD_TYPE})
 
 #####################
 # C module map directory for Swift import
@@ -16,62 +25,63 @@ file(GLOB_RECURSE MODULES_HEADERS
 
 #####################
 # Cuda
-find_package(CUDA QUIET REQUIRED)
-set(CUDA_KERNELS_LIB_NAME CudaKernels)
-set(CUDA_KERNELS_DIR ${MODULES_DIR}/${CUDA_KERNELS_LIB_NAME})
+cmake_policy(SET CMP0074 NEW)
+find_package(CUDA REQUIRED)
+
+#####################
+# SwiftRTCuda static library
+set(SWIFTRT_CUDA_LIB_NAME SwiftRTCuda)
+set(SWIFTRT_CUDA_DIR ${MODULES_DIR}/${SWIFTRT_CUDA_LIB_NAME})
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
+        -Wno-deprecated-gpu-targets
+        -gencode arch=compute_75,code=sm_75
+        --compiler-options -fPIC)
+
+if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
+    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -DDEBUG -g -G)
+else()
+    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -O3 -Xptxas -O3)
+endif()
+
+file(GLOB_RECURSE SWIFTRT_CUDA_SOURCES
+        ${SWIFTRT_CUDA_DIR}/*.cu
+        ${SWIFTRT_CUDA_DIR}/*.c
+        ${SWIFTRT_CUDA_DIR}/*.cpp
+        ${SWIFTRT_CUDA_DIR}/*.h)
+
+cuda_add_library(${SWIFTRT_CUDA_LIB_NAME} ${SWIFTRT_CUDA_SOURCES})
 
 #####################
 # swift
 #   set SWIFT_HOME in /etc/environment for CLion to pick up
-# and logout/login to make visible after setting
+# then re-login to make visible after setting
 IF(DEFINED ENV{SWIFT_HOME})
     set(SWIFT_HOME $ENV{SWIFT_HOME})
 ELSE()
     set(SWIFT_HOME /usr/local/swift)
 ENDIF()
+
 set(SWIFT ${SWIFT_HOME}/usr/bin/swift)
 set(SWIFTC ${SWIFT_HOME}/usr/bin/swiftc)
+# set(SWIFT_CLANG_INCLUDE ${SWIFT_HOME}/usr/lib/swift/clang/include)
+#        -Xswiftc -I${SWIFT_CLANG_INCLUDE}
 
 # configuration specific swift flags
 set(SWIFT_CONFIG_FLAGS
-        #        -Xswiftc -warnings-as-errors
-        -Xswiftc -j12
+        # -Xswiftc -warnings-as-errors
+        # -Xswiftc -j12
         -Xswiftc -I/usr/local/include
         -Xswiftc -L/usr/local/lib
-        -Xswiftc -I${CUDA_KERNELS_DIR}
-        -Xswiftc -I${MODULES_DIR}/Cuda
-        -Xswiftc -I${TARGET_DIR}
-        -Xswiftc -L${TARGET_DIR}
-        -Xlinker -l${CUDA_KERNELS_LIB_NAME}
+        -Xswiftc -I${MODULES_DIR}
+        -Xswiftc -I${SWIFTRT_CUDA_DIR}
+        -Xlinker -l${SWIFTRT_CUDA_LIB_NAME}
+        -Xswiftc -L${CMAKE_BINARY_DIR}
         -Xswiftc -I${CUDA_INCLUDE_DIRS}
         -Xlinker -L${CUDA_TOOLKIT_ROOT_DIR}/lib64
         )
 
 #####################
-# CudaKernels static library
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
-        -Wno-deprecated-gpu-targets
-        #        -gencode arch=compute_52,code=sm_52
-        -gencode arch=compute_61,code=sm_61
-        --compiler-options -fPIC)
-
-if (${TARGET_DIR} MATCHES "debug")
-    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -DDEBUG)
-endif()
-
-file(GLOB_RECURSE CUDA_KERNELS_SOURCES
-        ${CUDA_KERNELS_DIR}/*.cu
-        ${CUDA_KERNELS_DIR}/*.c
-        ${CUDA_KERNELS_DIR}/*.h)
-
-cuda_add_library(${CUDA_KERNELS_LIB_NAME} ${CUDA_KERNELS_SOURCES})
-
-set_target_properties(${CUDA_KERNELS_LIB_NAME} PROPERTIES ARCHIVE_OUTPUT_DIRECTORY ${TARGET_DIR})
-add_custom_command(TARGET ${CUDA_KERNELS_LIB_NAME} PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${TARGET_DIR})
-
-#####################
-# SwiftRT modules
+# SwiftRT module
 set(SWIFTRT_NAME SwiftRT)
 file(GLOB_RECURSE SWIFTRT_SOURCES  ${PROJECT_SOURCE_DIR}/Sources/*.swift)
 
@@ -81,7 +91,7 @@ add_custom_target(${SWIFTRT_NAME}
         COMMAND ${SWIFT} build -c ${SWIFT_BUILD_TYPE} ${SWIFTRT_FLAGS}
         SOURCES ${SWIFTRT_SOURCES} ${MODULES_HEADERS})
 
-add_dependencies(${SWIFTRT_NAME} ${CUDA_KERNELS_LIB_NAME})
+add_dependencies(${SWIFTRT_NAME} ${SWIFTRT_CUDA_LIB_NAME})
 
 #####################
 # SwiftRTTests app
@@ -92,7 +102,12 @@ file(GLOB_RECURSE SWIFTRT_TEST_SOURCES
 #set(TEST_CASE -s ${SWIFTRT_TESTS_NAME}.TestSetup/test_mnistForward)
 
 add_custom_target(${SWIFTRT_TESTS_NAME}
-        COMMAND ${SWIFT} test ${TEST_CASE} ${SWIFTRT_FLAGS}
-        SOURCES ${SWIFTRT_TEST_SOURCES})
+        COMMAND ${SWIFT} build -c ${SWIFT_BUILD_TYPE} ${SWIFTRT_FLAGS} --build-tests 
+        SOURCES ${SWIFTRT_TEST_SOURCES} ${MODULES_HEADERS})
 
-add_dependencies(${SWIFTRT_TESTS_NAME} ${SWIFTRT_NAME} ${CUDA_KERNELS_LIB_NAME})
+add_dependencies(${SWIFTRT_TESTS_NAME} ${SWIFTRT_NAME} ${SWIFTRT_CUDA_LIB_NAME})
+
+# whenever the custom cuda kernel libraries are build, delete the exe
+# to force swift build to relink
+add_custom_command(TARGET ${SWIFTRT_CUDA_LIB_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E remove ${TARGET_DIR}/SwiftRTPackageTests.xctest)

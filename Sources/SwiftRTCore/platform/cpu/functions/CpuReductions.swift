@@ -17,8 +17,8 @@ import Foundation
 import Numerics
 
 //==============================================================================
-// DeviceQueue functions with default cpu delegation
-extension DeviceQueue where Self: CpuFunctions
+// CpuQueue functions with default cpu delegation
+extension CpuQueue
 {
     //--------------------------------------------------------------------------
     @inlinable public func reduceAll<S>(
@@ -52,12 +52,13 @@ extension DeviceQueue where Self: CpuFunctions
     ) where E.Value: Comparable { cpu_reduceMax(x, &result) }
     //--------------------------------------------------------------------------
     @inlinable func reduce<S,E>(
+        _ opName: String,
         _ x: Tensor<S,E>,
         _ result: inout Tensor<S,E>,
         _ opId: ReductionOp,
         _ opNext: @escaping (E.Value, E.Value) -> E.Value,
         _ opFinal: ReduceOpFinal<Tensor<S,E>>?
-    ) { cpu_reduce(x, &result, opId, opNext, opFinal) }
+    ) { cpu_reduce(opName, x, &result, opId, opNext, opFinal) }
 }
 
 //==============================================================================
@@ -68,39 +69,155 @@ extension CpuFunctions where Self: DeviceQueue {
         _ x: Tensor<S,Bool>,
         _ r: inout Tensor<S,Bool>
     ) {
-        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) { $0 = $0 && $1 }
+        func execute<I0: Collection, O: MutableCollection>(_ i0: I0, _ out: O)
+        where I0.Element == Bool, O.Element == I0.Element
+        {
+            var out = out
+            if mode == .async {
+                diagnostic(.queue, "cpu_reduceAll on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
+                    out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                        $0 = $0 && $1
+                    }
+                }
+            } else {
+                out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                    $0 = $0 && $1
+                }
+            }
+        }
+        
+        if x.isBufferIterable {
+            execute(x.buffer, r.mutableBuffer)
+        } else {
+            execute(x.elements, r.mutableBuffer)
+        }
     }
+    
     //--------------------------------------------------------------------------
     @inlinable public func cpu_reduceAny<S>(
         _ x: Tensor<S,Bool>,
         _ r: inout Tensor<S,Bool>
     ) {
-        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) { $0 = $0 || $1 }
+        func execute<I0: Collection, O: MutableCollection>(_ i0: I0, _ out: O)
+        where I0.Element == Bool, O.Element == I0.Element
+        {
+            var out = out
+            if mode == .async {
+                diagnostic(.queue, "cpu_reduceAny on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
+                    out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                        $0 = $0 || $1
+                    }
+                }
+            } else {
+                out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                    $0 = $0 || $1
+                }
+            }
+        }
+        
+        if x.isBufferIterable {
+            execute(x.buffer, r.mutableBuffer)
+        } else {
+            execute(x.elements, r.mutableBuffer)
+        }
     }
+    
     //--------------------------------------------------------------------------
     @inlinable public func cpu_reduceSum<S,E>(
         _ x: Tensor<S,E>,
         _ r: inout Tensor<S,E>
-    ) where E.Value: AdditiveArithmetic {
-        r[r.startIndex] = x.buffer.reduce(into: E.Value.zero) { $0 += $1 }
+    ) where E.Value: AdditiveArithmetic
+    {
+        func execute<I0: Collection, O: MutableCollection>(
+            _ i0: I0, _ out: O
+        ) where I0.Element: AdditiveArithmetic, O.Element == I0.Element {
+            var out = out
+            let start = out.startIndex
+            if mode == .async {
+                diagnostic(.queue, "cpu_reduceSum on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
+                    out[start] = i0.reduce(into: I0.Element.zero) { $0 += $1 }
+                }
+            } else {
+                out[start] = i0.reduce(into: I0.Element.zero) { $0 += $1 }
+            }
+        }
+        
+        if x.isBufferIterable {
+            execute(x.buffer, r.mutableBuffer)
+        } else {
+            execute(x.elements, r.mutableBuffer)
+        }
     }
+    
     //--------------------------------------------------------------------------
     @inlinable public func cpu_reduceMean<S,E>(
         _ x: Tensor<S,E>,
         _ r: inout Tensor<S,E>
-    ) where E.Value: AlgebraicField {
-        let sum = x.buffer.reduce(into: E.Value.zero) { $0 += $1 }
-        r[r.startIndex] = sum / E.Value(exactly: x.count)!
+    ) where E.Value: AlgebraicField
+    {
+        func execute<I0: Collection, O: MutableCollection>(
+            _ i0: I0, _ out: O
+        ) where I0.Element: AlgebraicField, O.Element == I0.Element {
+            var out = out
+            let start = out.startIndex
+            let count = I0.Element(exactly: i0.count)!
+            if mode == .async {
+                diagnostic(.queue, "cpu_reduceMean on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
+                    let sum = i0.reduce(into: I0.Element.zero) { $0 += $1 }
+                    out[start] = sum / count
+                }
+            } else {
+                let sum = i0.reduce(into: I0.Element.zero) { $0 += $1 }
+                out[start] = sum / count
+            }
+        }
+        
+        if x.isBufferIterable {
+            execute(x.buffer, r.mutableBuffer)
+        } else {
+            execute(x.elements, r.mutableBuffer)
+        }
     }
+    
     //--------------------------------------------------------------------------
     @inlinable public func cpu_reduceMin<S,E>(
         _ x: Tensor<S,E>,
         _ r: inout Tensor<S,E>
     ) where E.Value: Comparable {
-        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) {
-            // TODO: report this
-            // this is 2X faster than: $0 = $0 <= $1 ? $0 : $1
-            $0 = Swift.min($0, $1)
+        
+        func execute<I0: Collection, O: MutableCollection>(_ i0: I0, _ out: O)
+        where I0.Element: Comparable, O.Element == I0.Element
+        {
+            var out = out
+            if mode == .async {
+                diagnostic(.queue, "cpu_reduceMin on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
+                    out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                        $0 = Swift.min($0, $1)
+                    }
+                }
+            } else {
+                // TODO: report this
+                // this is 2X faster than: $0 = $0 <= $1 ? $0 : $1
+                out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                    $0 = Swift.min($0, $1)
+                }
+            }
+        }
+        
+        if x.isBufferIterable {
+            execute(x.buffer, r.mutableBuffer)
+        } else {
+            execute(x.elements, r.mutableBuffer)
         }
     }
     //--------------------------------------------------------------------------
@@ -108,25 +225,48 @@ extension CpuFunctions where Self: DeviceQueue {
         _ x: Tensor<S,E>,
         _ r: inout Tensor<S,E>
     ) where E.Value: Comparable {
-        r[r.startIndex] = x.buffer.reduce(into: x[x.startIndex]) {
-            // TODO: report this
-            // this is 2X faster than: $0 = Swift.max($0, $1)
-            $0 = $0 > $1 ? $0 : $1
+        
+        func execute<I0: Collection, O: MutableCollection>(_ i0: I0, _ out: O)
+        where I0.Element: Comparable, O.Element == I0.Element
+        {
+            var out = out
+            if mode == .async {
+                diagnostic(.queue, "cpu_reduceMax on \(name)",
+                           categories: .queueFunc)
+                queue.async(group: group) {
+                    out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                        $0 = $0 > $1 ? $0 : $1
+                    }
+                }
+            } else {
+                // TODO: report this
+                // this is 2X faster than: $0 = Swift.max($0, $1)
+                out[out.startIndex] = i0.reduce(into: i0[i0.startIndex]) {
+                    $0 = $0 > $1 ? $0 : $1
+                }
+            }
+        }
+        
+        if x.isBufferIterable {
+            execute(x.buffer, r.mutableBuffer)
+        } else {
+            execute(x.elements, r.mutableBuffer)
         }
     }
 
     //--------------------------------------------------------------------------
     @inlinable func cpu_reduce<S,E>(
+        _ opName: String,
         _ x: Tensor<S,E>,
         _ result: inout Tensor<S,E>,
         _ opId: ReductionOp,
         _ opNext: @escaping (E.Value, E.Value) -> E.Value,
         _ opFinal: ReduceOpFinal<Tensor<S,E>>?
     ) {
-        mapOp(x, &result, opNext)
+        mapOp(opName, x, &result, opNext)
         
         if let op = opFinal {
-            mapOp(&result, op)
+            mapOp(opName, &result, op)
         }
     }
 }
