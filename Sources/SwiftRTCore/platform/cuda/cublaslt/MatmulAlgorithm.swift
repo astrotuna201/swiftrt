@@ -30,20 +30,21 @@ public final class MatmulAlgorithm: CustomStringConvertible
     @inlinable public init(
         algoId: Int,
         accumulatorType: MatmulAccumulatorType,
-        scaleType: StorageElementType,
-        aType: StorageElementType,
-        bType: StorageElementType,
-        cType: StorageElementType,
-        dType: StorageElementType,
-        using queue: PlatformType.Device.Queue = Context.currentQueue
+        scaleType: srtDataType,
+        aType: srtDataType,
+        bType: srtDataType,
+        cType: srtDataType,
+        dType: srtDataType,
+        using queue: Platform.Device.Queue = currentQueue
     ) {
         assert(cType == dType, "must be equal for now")
         desc = cublasLtMatmulAlgo_t()
         cudaCheck(cublasLtMatmulAlgoInit(
             queue.cublas.handle, 
             accumulatorType.cublas, 
-            scaleType.cuda, 
-            aType.cuda, bType.cuda, cType.cuda, dType.cuda, 
+            cudaDataType(scaleType), 
+            cudaDataType(aType), cudaDataType(bType),
+            cudaDataType(cType), cudaDataType(dType), 
             Int32(algoId), &desc))
     }
 
@@ -57,12 +58,12 @@ public final class MatmulAlgorithm: CustomStringConvertible
     public static func getIds(
         maxIds: Int,
         accumulatorType: MatmulAccumulatorType,
-        scaleType: StorageElementType,
-        aType: StorageElementType,
-        bType: StorageElementType,
-        cType: StorageElementType,
-        dType: StorageElementType,
-        using queue: PlatformType.Device.Queue = Context.currentQueue
+        scaleType: srtDataType,
+        aType: srtDataType,
+        bType: srtDataType,
+        cType: srtDataType,
+        dType: srtDataType,
+        using queue: Platform.Device.Queue = currentQueue
     ) -> [Int] {
         assert(cType == dType, "must be equal for now")
         var tempIds = [Int32](repeating: 0, count: maxIds)
@@ -70,8 +71,9 @@ public final class MatmulAlgorithm: CustomStringConvertible
         cudaCheck(cublasLtMatmulAlgoGetIds(
             queue.cublas.handle, 
             accumulatorType.cublas,
-            scaleType.cuda,
-            aType.cuda, bType.cuda, cType.cuda, dType.cuda,
+            cudaDataType(scaleType),
+            cudaDataType(aType), cudaDataType(bType),
+            cudaDataType(cType), cudaDataType(dType),
             Int32(maxIds),
             &tempIds, &tempFound))
         return tempIds[0..<Int(tempFound)].map(Int.init)

@@ -41,7 +41,7 @@ public protocol _Logging {
     /// - Parameter minCount: the minimum length of the message. If it exceeds
     ///   the actual message length, then trailing fill is used. This is used
     ///   mainly for creating message partitions i.e. "---------"
-    func writeLog(_ message: @autoclosure () -> String,
+    func writeLog(_ message: String,
                   level: LogLevel,
                   indent: Int,
                   trailing: String,
@@ -56,7 +56,7 @@ public protocol _Logging {
     ///   the actual message length, then trailing fill is used. This is used
     ///   mainly for creating message partitions i.e. "---------"
     func diagnostic(_ category: LogCategory,
-                    _ message: @autoclosure () -> String,
+                    _ message: String,
                     categories: LogCategories,
                     indent: Int,
                     trailing: String,
@@ -75,7 +75,7 @@ public extension _Logging {
     //--------------------------------------------------------------------------
     /// writeLog
     @inlinable func writeLog(
-        _ message: @autoclosure () -> String,
+        _ message: String,
         level: LogLevel = .error,
         indent: Int = 0,
         trailing: String = "",
@@ -83,7 +83,7 @@ public extension _Logging {
     ) {
         guard willLog(level: level) else { return }
         logWriter.write(level: level,
-                        message: message(),
+                        message: message,
                         nestingLevel: indent + logNestingLevel,
                         trailing: trailing, minCount: minCount)
     }
@@ -93,7 +93,7 @@ public extension _Logging {
     #if DEBUG
     @inlinable func diagnostic(
         _ category: LogCategory,
-        _ message: @autoclosure () -> String,
+        _ message: String,
         categories: LogCategories,
         indent: Int = 0,
         trailing: String = "",
@@ -106,21 +106,20 @@ public extension _Logging {
             categories.rawValue & mask == 0 { return }
         
         logWriter.write(level: .diagnostic,
-                        message: "\(category)\(message())",
+                        message: "\(category)\(message)",
                         nestingLevel: indent + logNestingLevel,
                         trailing: trailing, minCount: minCount)
     }
     #else
     @inlinable func diagnostic(
         _ category: LogCategory,
-        _ message: @autoclosure () -> String,
+        _ message: String,
         categories: LogCategories,
         indent: Int = 0,
         trailing: String = "",
         minCount: Int = 80) { }
     #endif
 }
-
 
 //==============================================================================
 /// LogInfo
@@ -174,8 +173,8 @@ public struct LogInfo {
 public protocol Logging : _Logging {}
 
 public extension Logging {
-    @inlinable var logWriter: Log { Context.log }
-    @inlinable var logLevel: LogLevel { Context.log.level }
+    @inlinable var logWriter: Log { log }
+    @inlinable var logLevel: LogLevel { log.level }
     @inlinable var logNamePath: String { "" }
     @inlinable var logNestingLevel: Int { 0 }
 }
@@ -222,7 +221,7 @@ public protocol LogWriter: class {
     ///   the actual message length, then trailing fill is used. This is used
     ///   mainly for creating message partitions i.e. "---------"
     func write(level: LogLevel,
-               message: @autoclosure () -> String,
+               message: String,
                nestingLevel: Int,
                trailing: String,
                minCount: Int)
@@ -252,7 +251,7 @@ public extension LogWriter {
     /// write
     @inlinable
     func write(level: LogLevel,
-               message: @autoclosure () -> String,
+               message: String,
                nestingLevel: Int = 0,
                trailing: String = "",
                minCount: Int = 0) {
@@ -260,21 +259,19 @@ public extension LogWriter {
         queue.sync { [unowned self] in
             guard !self._silent else { return }
             
-            // create fixed width string for level column
-            let messageStr = message()
             // keep this on a separate line so that the start time
             // is initialized before we take the current time
-            let startTime = Context.startTime
+            let startTime = Platform.startTime
             let messageTime = Date().timeIntervalSince(startTime)
             let levelStr = String(timeInterval: messageTime)
             let indent = String(repeating: " ",
                                 count: nestingLevel * self._tabSize)
-            var outputStr = levelStr + " " + indent + messageStr
+            var outputStr = levelStr + " " + indent + message
             
             // add trailing fill if desired
             if !trailing.isEmpty {
                 let fillCount = minCount - outputStr.count
-                if messageStr.isEmpty {
+                if message.isEmpty {
                     outputStr += String(repeating: trailing, count: fillCount)
                 } else {
                     if fillCount > 1 {
@@ -296,7 +293,7 @@ public final class Log: LogWriter {
     public var level: LogLevel
     public var _silent: Bool
     public var _tabSize: Int
-    public let queue = DispatchQueue(label: "Log.queue")
+    public let queue = DispatchQueue(label: "Log.queueCpu")
     public let logFile: FileHandle
 
     //--------------------------------------------------------------------------
@@ -394,17 +391,18 @@ public struct LogCategories: OptionSet {
     public static let dataReorder   = LogCategories(rawValue: 1 << 5)
     public static let device        = LogCategories(rawValue: 1 << 6)
     public static let fallback      = LogCategories(rawValue: 1 << 7)
-    public static let initialize    = LogCategories(rawValue: 1 << 8)
+    public static let setup         = LogCategories(rawValue: 1 << 8)
     public static let properties    = LogCategories(rawValue: 1 << 9)
     public static let queueAlloc    = LogCategories(rawValue: 1 << 10)
-    public static let queueFunc     = LogCategories(rawValue: 1 << 11)
-    public static let queueSync     = LogCategories(rawValue: 1 << 12)
+    public static let queueGpu      = LogCategories(rawValue: 1 << 11)
+    public static let queueCpu      = LogCategories(rawValue: 1 << 12)
+    public static let queueSync     = LogCategories(rawValue: 1 << 13)
 }
 
 public enum LogCategory: CustomStringConvertible {
     case alloc, blank, block, copy, create, device, expanding,
-         fallback, layout, mutation, queue, record, reference,
-         release, reorder, signaled, sync, timeout, wait
+         fallback, layout, mutation, queueGpu, queueCpu, record, reference,
+         release, reorder, setup, signaled, sync, timeout, wait
     
     public var description: String {
         switch self {
@@ -418,11 +416,13 @@ public enum LogCategory: CustomStringConvertible {
         case .fallback:  return "[\(setText("FALLBACK ", color: .yellow))] "
         case .layout:    return "[\(setText("LAYOUT   ", color: .yellow))] "
         case .mutation:  return "[\(setText("MUTATE   ", color: .blue))] "
-        case .queue:     return "[\(setText("QUEUE    ", color: .yellow))] >>> "
+        case .queueGpu:  return "[\(setText("GPU >>>> ", color: .white))] "
+        case .queueCpu:  return "[\(setText("CPU >>>> ", color: .white))] "
         case .record:    return "[\(setText("RECORD   ", color: .yellow))] "
         case .reference: return "[\(setText("REFERENCE", color: .cyan))] "
         case .release:   return "[\(setText("RELEASE  ", color: .cyan))] "
         case .reorder:   return "[\(setText("REORDER  ", color: .blue))] "
+        case .setup:     return "[\(setText("SETUP    ", color: .white))] "
         case .signaled:  return "[\(setText("SIGNALED ", color: .green))] "
         case .sync:      return "[\(setText("SYNC     ", color: .yellow))] "
         case .timeout:   return "[\(setText("TIMEOUT  ", color: .red))] "

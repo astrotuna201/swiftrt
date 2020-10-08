@@ -22,53 +22,59 @@ class test_AlgebraicField: XCTestCase {
     //--------------------------------------------------------------------------
     // support terminal test run
     static var allTests = [
-        // ("test_queryMatmulProperties", test_queryMatmulProperties),
-        // ("test_minimalAdd", test_minimalAdd),
-        // ("test_minimalAddVJP", test_minimalAddVJP),
+        ("test_addSubMulDivComplex", test_addSubMulDivComplex),
+
+        ("test_queryMatmulProperties", test_queryMatmulProperties),
+        ("test_minimalAdd", test_minimalAdd),
+        ("test_minimalAddVJP", test_minimalAddVJP),
         
-        // ("test_matmul", test_matmul),
-        // ("test_batchMatmul", test_batchMatmul),
-        // ("test_leftBatchMatmul", test_leftBatchMatmul),
-        // ("test_rightBatchMatmul", test_rightBatchMatmul),
+        ("test_matmul", test_matmul),
+        ("test_batchMatmul", test_batchMatmul),
+        ("test_leftBatchMatmul", test_leftBatchMatmul),
+        ("test_rightBatchMatmul", test_rightBatchMatmul),
         
-        // ("test_perfAdd", test_perfAdd),
+        ("test_perfAdd", test_perfAdd),
         ("test_add", test_add),
         ("test_addStrided", test_addStrided),
-        // ("test_addFloat16", test_addFloat16),
-        // ("test_addBFloat16", test_addBFloat16),
-
-        // ("test_addInt32", test_addInt32),
-        // ("test_addUInt8", test_addUInt8),
-        // ("test_addScalar", test_addScalar),
-        // ("test_addAndAssign", test_addAndAssign),
-        // ("test_addSubMulDivComplex", test_addSubMulDivComplex),
-
-        //  ("test_subtract", test_subtract),
-        //  ("test_subtractScalar", test_subtractScalar),
-        //  ("test_subtractVector", test_subtractVector),
-        //  ("test_subtractAndAssign", test_subtractAndAssign),
-
-        //  ("test_mul", test_mul),
-        //  ("test_mulScalar", test_mulScalar),
-        //  ("test_mulAndAssign", test_mulAndAssign),
-
-        //  ("test_div", test_div),
-        //  ("test_divScalar", test_divScalar),
-        //  ("test_divAndAssign", test_divAndAssign),
+        ("test_addFloat16", test_addFloat16),
+        ("test_addBFloat16", test_addBFloat16),
+        
+        ("test_addInt32", test_addInt32),
+        ("test_addUInt8", test_addUInt8),
+        ("test_addScalar", test_addScalar),
+        ("test_addAndAssign", test_addAndAssign),
+        
+        ("test_subtract", test_subtract),
+        ("test_subtractScalar", test_subtractScalar),
+        ("test_subtractVector", test_subtractVector),
+        ("test_subtractAndAssign", test_subtractAndAssign),
+        
+        ("test_mul", test_mul),
+        ("test_mulScalar", test_mulScalar),
+        ("test_mulAndAssign", test_mulAndAssign),
+        
+        ("test_div", test_div),
+        ("test_divScalar", test_divScalar),
+        ("test_divAndAssign", test_divAndAssign),
     ]
+
+    override func setUpWithError() throws {
+       log.level = .diagnostic
+    }
+
+    override func tearDownWithError() throws {
+       log.level = .error
+    }
 
     //--------------------------------------------------------------------------
     func test_addStrided() {
-        // Context.log.level = .diagnostic
         let a = array(0..<9, (3, 3), type: Float.self)
         let b = a[..., 1] + 1
-        // print(b)
         XCTAssert(b == [[2], [5], [8]])
     }
 
     //--------------------------------------------------------------------------
     func test_queryMatmulProperties() {
-        // Context.log.level = .diagnostic
         // do {
         //     let a = array(0..<6, (3, 2), type: Float16.self)
         //     print(a)
@@ -83,7 +89,7 @@ class test_AlgebraicField: XCTestCase {
         //         accumulatorType: .accumulator16F,
         //         scaleType: .real16F,
         //         preferences: preferences,
-        //         using: Context.currentQueue)
+        //         using: currentQueue)
         //     print(props)
         // }
 
@@ -114,7 +120,6 @@ class test_AlgebraicField: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_minimalAdd() {
-        // Context.log.level = .diagnostic
         let a = array([[0, 1], [2, 3], [4, 5]], name: "a")
         let b = a + 2
         XCTAssert(b == [[2, 3], [4, 5], [6, 7]])
@@ -122,7 +127,6 @@ class test_AlgebraicField: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_minimalAddVJP() {
-        // Context.log.level = .diagnostic
         let a = array([[0, 1], [2, 3], [4, 5]], name: "a")
         let v = ones(like: a, name: "ones")
         
@@ -133,7 +137,6 @@ class test_AlgebraicField: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_matmul() {
-        // Context.log.level = .diagnostic
         let a = array([0, 1, 2, 3, 4, 5], (3, 2))
         let b = array([0, 1, 2, 3, 4, 5, 6, 7], (2, 4))
         let c = matmul(a, b)
@@ -246,8 +249,7 @@ class test_AlgebraicField: XCTestCase {
     }
 
     //--------------------------------------------------------------------------
-    func test_add() { 
-//        Context.log.level = .diagnostic
+    func test_add() {
         let a = array(0..<6, (3, 2), name: "A")
         let b = array(0..<6, (3, 2), name: "B")
         let aOnes = ones(like: a)
@@ -256,17 +258,18 @@ class test_AlgebraicField: XCTestCase {
         XCTAssert(result == [[0, 2], [4, 6], [8, 10]])
 
         // both
+        let expected: [[Float]] = [[1, 1], [1, 1], [1, 1]]
         let (g1, g2) = pullback(at: a, b, in: { $0 + $1 })(aOnes)
-        XCTAssert(g1.flatArray == [1, 1, 1, 1, 1, 1])
-        XCTAssert(g2.flatArray == [1, 1, 1, 1, 1, 1])
+        XCTAssert(g1 == expected)
+        XCTAssert(g2 == expected)
         
         // lhs
         let glhs = pullback(at: a, in: { $0 + 2 })(aOnes)
-        XCTAssert(glhs.flatArray == [1, 1, 1, 1, 1, 1])
+        XCTAssert(glhs == expected)
         
         // rhs
         let grhs = pullback(at: a, in: { 2 + $0 })(aOnes)
-        XCTAssert(grhs.flatArray == [1, 1, 1, 1, 1, 1])
+        XCTAssert(grhs == expected)
     }
 
     //--------------------------------------------------------------------------
@@ -279,7 +282,6 @@ class test_AlgebraicField: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_addBFloat16() {
-        // Context.log.level = .diagnostic
         let a = array(0..<6, (3, 2), type: BFloat16.self)
         let b = array(0..<6, (3, 2), type: BFloat16.self)
         let result = a + b
@@ -322,7 +324,7 @@ class test_AlgebraicField: XCTestCase {
     
     //--------------------------------------------------------------------------
     func test_addSubMulDivComplex() {
-        // Context.log.level = .diagnostic
+        // we don't do Complex on the gpu yet, so use the cpu
         typealias CF = Complex<Float>
         let data: [Complex<Float>] = [1, 2, 3, 4]
         let a = array(data, (2, 2))
@@ -371,17 +373,18 @@ class test_AlgebraicField: XCTestCase {
             XCTAssert(g1 == [[1, 2], [3, 4]])
             XCTAssert(g2 == [[1, 2], [3, 4]])
         }
-        do {
-            let (g1, g2) = pullback(at: a, b, in: { $0 / $1 })(v)
-            let data = [1, 0.5, 0.333333343, 0.25].map { CF($0) }
-            let g1Expected = array(data, (2, 2))
-            let g1sumdiff = sum(g1 - g1Expected).element
-            XCTAssert(abs(g1sumdiff.real) <= 1e-6 && g1sumdiff.imaginary == 0)
+        // do {
+        //     print("start")
+        //     let (g1, g2) = pullback(at: a, b, in: { $0 / $1 })(v)
+        //     let data = [1, 0.5, 0.333333343, 0.25].map { CF($0) }
+        //     let g1Expected = array(data, (2, 2))
+        //     let g1sumdiff = sum(g1 - g1Expected).element
+        //     XCTAssert(abs(g1sumdiff.real) <= 1e-6 && g1sumdiff.imaginary == 0)
 
-            let g2Expected = -array(data, (2, 2))
-            let g2sumdiff = sum(g2 - g2Expected).element
-            XCTAssert(abs(g2sumdiff.real) <= 1e-6 && g2sumdiff.imaginary == 0)
-        }
+        //     let g2Expected = -array(data, (2, 2))
+        //     let g2sumdiff = sum(g2 - g2Expected).element
+        //     XCTAssert(abs(g2sumdiff.real) <= 1e-6 && g2sumdiff.imaginary == 0)
+        // }
     }
 
     //--------------------------------------------------------------------------
@@ -502,13 +505,13 @@ class test_AlgebraicField: XCTestCase {
         
         // lhs
         let glhs = pullback(at: a, in: { $0 / 2 })(ones(like: a))
-        XCTAssert(glhs.flatArray == [0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+        XCTAssert(glhs == [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]])
         
         // rhs
         let grhs = pullback(at: a, in: { 2 / $0 })(ones(like: a))
-        XCTAssert(grhs.flatArray == [-2, -0.125, -0.024691358, -0.0078125,
-                                     -0.0032, -0.0015432099])
-
+        XCTAssert(grhs == [[-2, -0.125], 
+                           [-0.024691358, -0.0078125],
+                           [-0.0032, -0.0015432099]])
     }
 
     //--------------------------------------------------------------------------

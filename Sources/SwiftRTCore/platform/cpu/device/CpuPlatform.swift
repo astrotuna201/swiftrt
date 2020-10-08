@@ -13,39 +13,62 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+import Foundation
 
 //==============================================================================
 /// CpuPlatform
 /// The collection of compute resources available to the application
 /// on the machine where the process is being run.
-public class CpuPlatform: Platform {
+public final class CpuPlatform: ComputePlatform {
+    // types
+    public typealias Storage = CpuStorage
+
+    // shared
+    public static let acceleratorQueueCount = 0
+    public static var cpuQueueCount = 0
+    public static let discreteMemoryDeviceId = 1
+    public static let eventId = AtomicCounter()
+    public static let local = CpuPlatform()
+    public static let mainThread = pthread_self()
+    public static let objectId = AtomicCounter()
+    public static let queueId = AtomicCounter()
+    public static let startTime = Date()
+    public static var lastRandomSeed: RandomSeed = generateRandomSeed()
+
+    //-------------------------------------
+    public static let testDevice =
+        CpuDevice(index: 1, memoryType: .discrete, queueCount: 2)
+
+    //-------------------------------------
+    // for synchrnous execution and syncing with the app thread
+    public static let syncQueue =
+        CpuQueue(deviceIndex: 0, name: "appThread",
+                 queueMode: .sync, memoryType: .unified)
+
     // properties
-    public static var defaultCpuQueueCount: Int = 1
-    public static var defaultAcceleratorQueueCount: Int = 0
-    public var discreteMemoryDeviceId: Int { 1 }
     public var devices: [CpuDevice]
-    public let name: String
+    @inlinable public var name: String { "\(Self.self)" }
     public var queueStack: [CpuQueue]
-    public let appThreadQueue: CpuQueue
+
+    //-------------------------------------
+    // HACK for AD
+    /// a storage buffer with a single zero value which is shared
+    /// every time Element.zero is obtained by AD.
+    // used to minimize AD overhead. AD needs to fix this problem.
+    public static let zeroStorage: Storage = {
+        Storage(storedElement: Int64(0), name: "Zero")
+    }()
 
     //--------------------------------------------------------------------------
-    @inlinable public init() {
-        name = "\(Self.self)"
-        
+    @inlinable public init(queueCount: Int = CpuPlatform.cpuQueueCount) {
         // create the device and default number of async queues
-        let device = CpuDevice(index: 0, memoryType: .unified)
+        devices = [CpuDevice(index: 0, memoryType: .unified,
+                             queueCount: queueCount)]
 
-        let test = CpuDevice(index: 1, memoryType: .discrete)
-        devices = [device, test]
+        // make the app thread queue current by default
+        queueStack = [Self.syncQueue]
 
-        // create the application thread data interchange queue
-        appThreadQueue = CpuQueue(deviceIndex: 0,
-                             name: "appThread",
-                             queueMode: .sync,
-                             memoryType: .unified)
-        
-        // if the number of requested async queues is 0, then make the
-        // appThreadQueue the default
-        queueStack = device.queues.count == 0 ? [appThreadQueue] : [device.queues[0]]
+        diagnostic(.device, "create  sync queue: appThread",
+                   categories: .queueAlloc)
     }
 }

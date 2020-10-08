@@ -91,7 +91,7 @@ extension Layer {
     /// - Parameter input: The input to the layer.
     /// - Returns: The inference output.
     public func inferring(from input: Input) -> Output {
-        Context.whileInferring { self(input) }
+        fatalError()
     }
 
     // TODO(TF-433, SR-11882): Remove this custom derivative when
@@ -100,10 +100,7 @@ extension Layer {
     @usableFromInline func _vjpInferring(from input: Input)
         -> (value: Output, pullback: (Output.TangentVector)
             -> (TangentVector, Input.TangentVector)) {
-        Context.whileInferring {
-            let (output, pullback) = appliedForBackpropagation(to: input)
-            return (output, { v in pullback(v) })
-        }
+        fatalError()
     }
 
     public typealias Backpropagator = (_ direction: Output.TangentVector)

@@ -17,67 +17,84 @@ import Foundation
 
 //==============================================================================
 // DeviceQueue functions with default cpu delegation
-extension DeviceQueue where Self: CpuFunctions
-{
-    //--------------------------------------------------------------------------
-    @inlinable func fill<S,E: StorageElement>(
-        _ x: inout Tensor<S,E>,
-        with element: E.Value
-    ) where S: TensorShape { cpu_fill(&x, with: element) }
-    //--------------------------------------------------------------------------
-    @inlinable func fill<S,E,B>(
-        _ x: inout Tensor<S,E>,
-        with range: Range<B>
-    ) where S: TensorShape, E: StorageElement, E.Value: Numeric,
-            B: SignedInteger, B.Stride: SignedInteger
-    { cpu_fill(&x, with: range) }
-    //--------------------------------------------------------------------------
-    @inlinable func eye<S,E: StorageElement>(
-        _ x: inout Tensor<S,E>,
-        offset: Int
-    ) where S: TensorShape, E.Value: Numeric { cpu_eye(&x, offset: offset) }
+extension CpuQueue {
     //--------------------------------------------------------------------------
     @inlinable func fill<S,E>(
-        randomUniform x: inout Tensor<S,E>,
+        _ out: inout Tensor<S,E>,
+        with element: E.Value
+    ) {
+        cpu_fill(&out, with: element)
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func fill<S,E>(
+        _ out: inout Tensor<S,E>,
+        from first: E.Value,
+        to last: E.Value,
+        by step: E.Value
+    ) where E.Value: Numeric {
+        cpu_fill(&out, from: first, to: last, by: step)
+    }
+    
+    //--------------------------------------------------------------------------
+    @inlinable func eye<S,E: StorageElement>(
+        _ out: inout Tensor<S,E>,
+        offset: Int
+    ) where E.Value: Numeric {
+        cpu_eye(&out, offset: offset)
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func fill<S,E>(
+        randomUniform out: inout Tensor<S,E>,
         _ lower: E.Value,
         _ upper: E.Value,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    { cpu_fill(randomUniform: &x, lower, upper, seed) }
+    ) where E.Value: BinaryFloatingPoint {
+        cpu_fill(randomUniform: &out, lower, upper, seed)
+    }
+
     //--------------------------------------------------------------------------
     @inlinable func fill<S,E>(
-        randomNormal x: inout Tensor<S,E>,
+        randomNormal out: inout Tensor<S,E>,
         _ mean: E.Value,
         _ standardDeviation: E.Value,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    { cpu_fill(randomNormal: &x, mean, standardDeviation, seed) }
+    ) where E.Value: BinaryFloatingPoint {
+        cpu_fill(randomNormal: &out, mean, standardDeviation, seed)
+    }
+
     //--------------------------------------------------------------------------
     // case where the mean and stddev are not static scalars,
     // but tensor results from previous ops
     @inlinable func fill<S,E>(
-        randomNormal x: inout Tensor<S,E>,
+        randomNormal out: inout Tensor<S,E>,
         _ mean: Tensor<S,E>,
         _ standardDeviation: Tensor<S,E>,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    { cpu_fill(randomNormal: &x, mean, standardDeviation, seed) }
+    ) where E.Value: BinaryFloatingPoint {
+        cpu_fill(randomNormal: &out, mean, standardDeviation, seed)
+    }
+
     //--------------------------------------------------------------------------
     @inlinable func fill<S,E>(
-        randomTruncatedNormal x: inout Tensor<S,E>,
+        randomTruncatedNormal out: inout Tensor<S,E>,
         _ mean: E.Value,
         _ standardDeviation: E.Value,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    { cpu_fill(randomTruncatedNormal: &x, mean, standardDeviation, seed) }
+    ) where E.Value: BinaryFloatingPoint {
+        cpu_fill(randomTruncatedNormal: &out, mean, standardDeviation, seed)
+    }
+
     //--------------------------------------------------------------------------
     @inlinable func fill<S,E>(
-        randomTruncatedNormal x: inout Tensor<S,E>,
+        randomTruncatedNormal out: inout Tensor<S,E>,
         _ mean: Tensor<S,E>,
         _ standardDeviation: Tensor<S,E>,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    { cpu_fill(randomTruncatedNormal: &x, mean, standardDeviation, seed) }
+    ) where E.Value: BinaryFloatingPoint {
+        cpu_fill(randomTruncatedNormal: &out, mean, standardDeviation, seed)
+    }
 }
 
 //==============================================================================
@@ -85,55 +102,65 @@ extension DeviceQueue where Self: CpuFunctions
 extension CpuFunctions where Self: DeviceQueue {
     //--------------------------------------------------------------------------
     @inlinable func cpu_eye<S,E>(
-        _ result: inout Tensor<S,E>,
+        _ out: inout Tensor<S,E>,
         offset: Int
-    ) where S: TensorShape, E.Value: Numeric {
-        mapOp("cpu_eye", &result) { 0 }
+    ) where E.Value: Numeric {
+        diagnostic(.queueCpu, "eye(\(out.name)) on \(name)",
+                   categories: .queueCpu)
+        mapOp(&out) { 0 }
     }
     
     //--------------------------------------------------------------------------
     @inlinable func cpu_fill<S,E>(
-        _ result: inout Tensor<S,E>,
+        _ out: inout Tensor<S,E>,
         with element: E.Value
-    ) where S: TensorShape {
-        mapOp("cpu_fill element", &result) { element }
+    ) {
+        diagnostic(.queueCpu, "fill(\(out.name), with: \(element)) on \(name)",
+                   categories: .queueCpu)
+        mapOp(&out) { element }
     }
     
     //--------------------------------------------------------------------------
-    @inlinable func cpu_fill<S,E,B>(
-        _ result: inout Tensor<S,E>,
-        with range: Range<B>
-    ) where S: TensorShape, E.Value: Numeric,
-            B: SignedInteger, B.Stride: SignedInteger
-    {
-        mapOp("cpu_fill range", range.lazy.map { E.Value(exactly: $0)! }, &result)
+    @inlinable func cpu_fill<S,E>(
+        _ out: inout Tensor<S,E>,
+        from first: E.Value,
+        to last: E.Value,
+        by step: E.Value
+    ) where E.Value: Numeric {
+        diagnostic(.queueCpu, "fill(\(out.name), from: \(first), to: \(last)," +
+                    " by: \(step)) on \(name)", categories: .queueCpu)
+        mapOp(from: first, to: last, by: step, &out)
     }
     //--------------------------------------------------------------------------
     @inlinable func cpu_fill<S,E>(
-        randomUniform result: inout Tensor<S,E>,
+        randomUniform out: inout Tensor<S,E>,
         _ lower: E.Value,
         _ upper: E.Value,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    {
+    ) where E.Value: BinaryFloatingPoint {
+        diagnostic(.queueCpu, "fill(randomUniform: \(out.name), lower: " +
+                    "\(lower), upper: \(upper), seed: \(seed)) on \(name)",
+                   categories: .queueCpu)
         let scale = Double(upper - lower) / Double(UInt64.max)
-        var generator = Context.createRandomNumberGenerator(using: seed)
-        mapOp("cpu_fill randomUniform", &result) {
+        var generator = Platform.createRandomNumberGenerator(using: seed)
+        mapOp(&out) {
             E.Value(Double(generator.next()) * scale) + lower
         }
     }
     
     //--------------------------------------------------------------------------
     @inlinable func cpu_fill<S,E>(
-        randomNormal result: inout Tensor<S,E>,
+        randomNormal out: inout Tensor<S,E>,
         _ mean: E.Value,
-        _ standardDeviation: E.Value,
+        _ std: E.Value,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    {
-        let scale = Double(standardDeviation) / Double(UInt64.max)
-        var generator = Context.createRandomNumberGenerator(using: seed)
-        mapOp("cpu_fill randomNormal", &result) {
+    ) where E.Value: BinaryFloatingPoint {
+        diagnostic(.queueCpu, "fill(randomNormal: \(out.name), mean: " +
+                    "\(mean), std: \(std), seed: \(seed)) on \(name)",
+                   categories: .queueCpu)
+        let scale = Double(std) / Double(UInt64.max)
+        var generator = Platform.createRandomNumberGenerator(using: seed)
+        mapOp(&out) {
             E.Value(Double(generator.next()) * scale) + mean
         }
     }
@@ -142,32 +169,36 @@ extension CpuFunctions where Self: DeviceQueue {
     // case where the mean and stddev are not static scalars,
     // but tensor results from previous ops
     @inlinable func cpu_fill<S,E>(
-        randomNormal result: inout Tensor<S,E>,
+        randomNormal out: inout Tensor<S,E>,
         _ mean: Tensor<S,E>,
-        _ standardDeviation: Tensor<S,E>,
+        _ std: Tensor<S,E>,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    {
-        assert(standardDeviation.count == 1 && mean.count == 1)
-        let scale = Double(standardDeviation.element) / Double(UInt64.max)
-        var generator = Context.createRandomNumberGenerator(using: seed)
-        mapOp("cpu_fill randomNormal", &result) {
+    ) where E.Value: BinaryFloatingPoint {
+        assert(std.count == 1 && mean.count == 1)
+        diagnostic(.queueCpu, "fill(randomNormal: \(out.name), mean: " +
+                    "\(mean.name), std: \(std.name), seed: \(seed)) on \(name)",
+                   categories: .queueCpu)
+        let scale = Double(std.element) / Double(UInt64.max)
+        var generator = Platform.createRandomNumberGenerator(using: seed)
+        mapOp(&out) {
             E.Value(Double(generator.next()) * scale) + mean.element
         }
     }
     
     //--------------------------------------------------------------------------
     @inlinable func cpu_fill<S,E>(
-        randomTruncatedNormal result: inout Tensor<S,E>,
+        randomTruncatedNormal out: inout Tensor<S,E>,
         _ mean: E.Value,
-        _ standardDeviation: E.Value,
+        _ std: E.Value,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    {
-        let std2x = standardDeviation * 2
-        let scale = Double(standardDeviation) / Double(UInt64.max)
-        var generator = Context.createRandomNumberGenerator(using: seed)
-        mapOp("cpu_fill randomTruncatedNormal", &result) {
+    ) where E.Value: BinaryFloatingPoint {
+        diagnostic(.queueCpu, "fill(randomTruncatedNormal: \(out.name), mean: " +
+                    "\(mean), std: \(std), seed: \(seed)) on \(name)",
+                   categories: .queueCpu)
+        let std2x = std * 2
+        let scale = Double(std) / Double(UInt64.max)
+        var generator = Platform.createRandomNumberGenerator(using: seed)
+        mapOp(&out) {
             let a = Double(generator.next()) * scale
             return E.Value(a).clamped(to: -std2x...std2x) + mean
         }
@@ -175,17 +206,19 @@ extension CpuFunctions where Self: DeviceQueue {
     
     //--------------------------------------------------------------------------
     @inlinable func cpu_fill<S,E>(
-        randomTruncatedNormal result: inout Tensor<S,E>,
+        randomTruncatedNormal out: inout Tensor<S,E>,
         _ mean: Tensor<S,E>,
-        _ standardDeviation: Tensor<S,E>,
+        _ std: Tensor<S,E>,
         _ seed: RandomSeed
-    ) where S: TensorShape, E.Value: BinaryFloatingPoint
-    {
-        assert(standardDeviation.count == 1 && mean.count == 1)
-        let std2x = standardDeviation.element * 2
-        let scale = Double(standardDeviation.element) / Double(UInt64.max)
-        var generator = Context.createRandomNumberGenerator(using: seed)
-        mapOp("cpu_fill randomTruncatedNormal", &result) {
+    ) where E.Value: BinaryFloatingPoint {
+        assert(std.count == 1 && mean.count == 1)
+        diagnostic(.queueCpu, "fill(randomTruncatedNormal: \(out.name), " +
+                    "mean: \(mean.name), std: \(std.name), seed: \(seed)) on \(name)",
+                   categories: .queueCpu)
+        let std2x = std.element * 2
+        let scale = Double(std.element) / Double(UInt64.max)
+        var generator = Platform.createRandomNumberGenerator(using: seed)
+        mapOp(&out) {
             let a = Double(generator.next()) * scale
             return E.Value(a).clamped(to: -std2x...std2x) + mean.element
         }

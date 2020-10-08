@@ -24,9 +24,17 @@ public final class DiscreteStorage: StorageBuffer {
     public let id: Int
     public var isReadOnly: Bool
     public var isReference: Bool
-    
-    public var name: String {
-        didSet { replicas.forEach { $0?.name = name } }
+    public var isZero: Bool
+
+    @usableFromInline var _name: String = defaultTensorName
+    @inlinable public var name: String {
+        get {
+            _name != defaultTensorName ? _name : "\(defaultTensorName)(\(id))"
+        }
+        set {
+            _name = newValue
+            replicas.forEach { $0?.name = newValue }
+        }
     }
 
     //------------------------------------
@@ -35,7 +43,7 @@ public final class DiscreteStorage: StorageBuffer {
     public var replicas: [DeviceMemory?]
 
     /// the last queue used to access storage
-    public var lastQueue: DeviceQueue?
+    public var lastQueue: Platform.Device.Queue?
 
     /// whenever a buffer write pointer is taken, the associated DeviceMemory
     /// becomes the master copy for replication. Synchronization across threads
@@ -65,17 +73,18 @@ public final class DiscreteStorage: StorageBuffer {
         count: Int,
         name: String
     ) {
-        self.name = name
+        _name = name
         alignment = MemoryLayout<Element>.alignment
         byteCount = MemoryLayout<Element>.size * count
-        id = Context.nextBufferId
+        id = Platform.objectId.next
         isReadOnly = false
         isReference = false
+        isZero = false
         masterVersion = -1
         _lastAccessCopiedMemory = false
 
         // setup replica managment
-        let numDevices = Context.local.platform.devices.count
+        let numDevices = platform.devices.count
         replicas = [DeviceMemory?](repeating: nil, count: numDevices)
     }
     
@@ -85,23 +94,39 @@ public final class DiscreteStorage: StorageBuffer {
         // TODO: change this to cache single scalars
         self.init(storedType: Element.self, count: 1, name: name)
         let buffer = readWrite(type: Element.self, at: 0, count: 1,
-                               using: Context.appThreadQueue)
+                               using: Platform.syncQueue)
         buffer[0] = storedElement
     }
-    
+
+    //--------------------------------------------------------------------------
+    /// `init(storedElement:name:
+    public convenience init<Element>(
+        storedElement: Element, 
+        name: String
+    ) where Element: Numeric {
+        // TODO: maybe remove this special case now that the driver
+        // takes single elements directly
+        self.init(storedType: Element.self, count: 1, name: name)
+        let buffer = readWrite(type: Element.self, at: 0, count: 1,
+                               using: Platform.syncQueue)
+        buffer[0] = storedElement
+        isZero = storedElement == 0
+    }
+
     //--------------------------------------------------------------------------
     // init(type:other:using:
     @inlinable public init<Element>(
         type: Element.Type,
         copying other: DiscreteStorage,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) {
-        id = Context.nextBufferId
+        id = Platform.objectId.next
         alignment = other.alignment
         byteCount = other.byteCount
         isReadOnly = other.isReadOnly
         isReference = other.isReference
-        name = other.name
+        isZero = other.isZero
+        _name = other.name
         masterVersion = -1
         _lastAccessCopiedMemory = false
 
@@ -109,11 +134,10 @@ public final class DiscreteStorage: StorageBuffer {
         replicas = [DeviceMemory?](repeating: nil, count: other.replicas.count)
 
         // copy other master to self using the current queue
-        let queue = Context.currentQueue
+        let queue = currentQueue
         let otherMemory = other.getDeviceMemory(Element.self, queue)
         let selfMemory = getDeviceMemory(Element.self, queue)
-        diagnostic(.copy, "\(other.name)(\(other.id)) --> " +
-                    "\(name)(\(id)) \(Element.self)" +
+        diagnostic(.copy, "\(other.name) --> \(name) \(Element.self)" +
                     "[\(byteCount / MemoryLayout<Element>.size)]",
                     categories: .dataCopy)
         queue.copyAsync(from: otherMemory, to: selfMemory)
@@ -131,7 +155,7 @@ public final class DiscreteStorage: StorageBuffer {
         let p = UnsafeMutableBufferPointer(mutating: buffer)
         let raw = UnsafeMutableRawBufferPointer(p)
         replicas[0] = CpuDeviceMemory(0, raw, .unified, isReference: true)
-        diagnostic(.reference, "\(name)(\(id)) \(Element.self)[\(buffer.count)]",
+        diagnostic(.reference, "\(name) \(Element.self)[\(buffer.count)]",
                    categories: .dataAlloc)
     }
     
@@ -145,7 +169,7 @@ public final class DiscreteStorage: StorageBuffer {
         isReference = true
         let raw = UnsafeMutableRawBufferPointer(buffer)
         replicas[0] = CpuDeviceMemory(0, raw, .unified, isReference: true)
-        diagnostic(.reference, "\(name)(\(id)) \(Element.self)[\(buffer.count)]",
+        diagnostic(.reference, "\(name) \(Element.self)[\(buffer.count)]",
                    categories: .dataAlloc)
     }
 
@@ -178,7 +202,7 @@ public final class DiscreteStorage: StorageBuffer {
         type: Element.Type,
         at index: Int,
         count: Int,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) -> UnsafeBufferPointer<Element> {
         let buffer = migrate(type, willMutate: false, using: queue)
         assert(index + count <= buffer.count, "range is out of bounds")
@@ -192,7 +216,7 @@ public final class DiscreteStorage: StorageBuffer {
         type: Element.Type,
         at index: Int,
         count: Int,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) -> UnsafeMutableBufferPointer<Element> {
         let buffer = migrate(type, willMutate: true, using: queue)
         assert(index + count <= buffer.count, "range is out of bounds")
@@ -206,7 +230,7 @@ public final class DiscreteStorage: StorageBuffer {
     // associated with `queue`. It will lazily create device memory if needed
     @inlinable public func getDeviceMemory<Element>(
         _ type: Element.Type,
-        _ queue: DeviceQueue
+        _ queue: Platform.Device.Queue
     ) -> DeviceMemory {
         if let memory = replicas[queue.deviceIndex] {
             return memory
@@ -218,9 +242,9 @@ public final class DiscreteStorage: StorageBuffer {
             
             if willLog(level: .diagnostic) {
                 let count = byteCount / MemoryLayout<Element>.size
-                let msg = "(\(id)) on \(queue.deviceName) using \(queue.name) " +
+                let msg = "\(name) on \(queue.deviceName) using \(queue.name) " +
                           " \(Element.self)[\(count)]"
-                diagnostic(.alloc, "\(name)\(msg)", categories: .dataAlloc)
+                diagnostic(.alloc, msg, categories: .dataAlloc)
                 memory.name = name
                 memory.releaseMessage = msg
             }
@@ -236,8 +260,8 @@ public final class DiscreteStorage: StorageBuffer {
     ///  - willMutate: `true` if the subsequent operation will mutate the
     ///    the tensor. Used only for diagnostics
     @inlinable public func synchronize(
-        _ queue: DeviceQueue, 
-        with dependentQueue: DeviceQueue,
+        _ queue: Platform.Device.Queue, 
+        with dependentQueue: Platform.Device.Queue,
         _ willMutate: Bool
     ) {
         // if the queue ids are equal or the dependent queue is synchronous,
@@ -247,7 +271,7 @@ public final class DiscreteStorage: StorageBuffer {
 
         diagnostic(.sync, "\(queue.name) will wait for" +
                     " \(dependentQueue.name) to " +
-                    "\(willMutate ? "write" : "read") \(name)(\(id))",
+                    "\(willMutate ? "write" : "read") \(name)",
                     categories: .queueSync)
 
         if queue.mode == .sync {
@@ -257,7 +281,7 @@ public final class DiscreteStorage: StorageBuffer {
         } else {
             // if both queues are async, then record an event on the
             // the `dependentQueue` and have `queue` wait for it
-            queue.wait(for: dependentQueue.record())
+            queue.wait(for: dependentQueue.recordEvent())
         }         
     }
 
@@ -276,7 +300,7 @@ public final class DiscreteStorage: StorageBuffer {
     @inlinable public func migrate<Element>(
         _ type: Element.Type,
         willMutate: Bool,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) -> UnsafeMutableBufferPointer<Element> {
         assert(willMutate || master != nil,
                "attempting to read uninitialized memory")
@@ -292,14 +316,14 @@ public final class DiscreteStorage: StorageBuffer {
 
             func outputCopyMessage() {
                 diagnostic(.copy,
-                    "\(name)(\(id)) dev:\(master.deviceIndex)" +
+                    "\(name) dev:\(master.deviceIndex)" +
                     "\(setText(" --> ", color: .blue))" +
                     "\(queue.deviceName)_q\(queue.id)  " +
                     "\(Element.self)[\(replica.count(of: Element.self))]",
                     categories: .dataCopy)
             }
             
-            func copyIfChanged(using q: DeviceQueue) {
+            func copyIfChanged(using q: Platform.Device.Queue) {
                 if master.version != replica.version {
                     q.copyAsync(from: master, to: replica)
                     outputCopyMessage()

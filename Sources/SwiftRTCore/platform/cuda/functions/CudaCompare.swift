@@ -28,11 +28,13 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_and(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "and(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtAnd(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtAnd(l, lDesc, r, rDesc, o, oDesc, stream)
                 }
             }
         }
@@ -52,12 +54,14 @@ extension CudaQueue {
             cpu_elementsAlmostEqual(lhs, rhs, tolerance, &out)
             return
         }
+        diagnostic(.queueGpu, "elementsAlmostEqual(\(lhs.name), \(rhs.name), " +
+                    "tolerance: \(tolerance))",  categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
                     withUnsafePointer(to: tolerance) { t in
-                        srtElementsAlmostEqual(lData, l, rData, r, t, oData, o, stream)
+                        srtElementsAlmostEqual(l, lDesc, r, rDesc, t, o, oDesc, stream)
                     }
                 }
             }
@@ -74,11 +78,13 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_equal(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "equal(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtEqual(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtEqual(l, lDesc, r, rDesc, o, oDesc, stream)
                 }
             }
         }
@@ -86,6 +92,9 @@ extension CudaQueue {
     }
 
     //--------------------------------------------------------------------------
+    // greater
+
+    // greater tensor tensor
     @inlinable public func greater<S,E>(
         _ lhs: Tensor<S,E>, 
         _ rhs: Tensor<S,E>,
@@ -94,11 +103,34 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_greater(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "greater(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtGreater(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtGreater(l, lDesc, r, rDesc, o, oDesc, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.greater(lhs, rhs, &out) }
+    }
+
+    // greater tensor Element
+    @inlinable public func greater<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: E.Value,
+        _ out: inout Tensor<S,Bool>
+    ) where E.Value: Comparable {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_greater(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "greater(\(lhs.name), \(rhs))",
+                    categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                withUnsafePointer(to: rhs) { r in
+                    srtGreaterTE(l, lDesc, r, o, oDesc, stream)
                 }
             }
         }
@@ -106,6 +138,9 @@ extension CudaQueue {
     }
 
     //--------------------------------------------------------------------------
+    // greaterOrEqual
+
+    // greaterOrEqual tensor tensor
     @inlinable public func greaterOrEqual<S,E>(
         _ lhs: Tensor<S,E>, 
         _ rhs: Tensor<S,E>,
@@ -114,11 +149,34 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_greaterOrEqual(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "greaterOrEqual(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtGreaterOrEqual(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtGreaterOrEqual(l, lDesc, r, rDesc, o, oDesc, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.greaterOrEqual(lhs, rhs, &out) }
+    }
+
+    // greaterOrEqual tensor Element
+    @inlinable public func greaterOrEqual<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: E.Value,
+        _ out: inout Tensor<S,Bool>
+    ) where E.Value: Comparable {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_greaterOrEqual(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "greaterOrEqual(\(lhs.name), \(rhs))",
+                    categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                withUnsafePointer(to: rhs) { r in
+                    srtGreaterOrEqualTE(l, lDesc, r, o, oDesc, stream)
                 }
             }
         }
@@ -126,6 +184,9 @@ extension CudaQueue {
     }
 
     //--------------------------------------------------------------------------
+    // less
+
+    // less tensor tensor
     @inlinable public func less<S,E>(
         _ lhs: Tensor<S,E>, 
         _ rhs: Tensor<S,E>,
@@ -134,11 +195,34 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_less(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "less(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtLess(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtLess(l, lDesc, r, rDesc, o, oDesc, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.less(lhs, rhs, &out) }
+    }
+
+    // less tensor Element
+    @inlinable public func less<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: E.Value,
+        _ out: inout Tensor<S,Bool>
+    ) where E.Value: Comparable {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_less(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "less(\(lhs.name), \(rhs))",
+                    categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                withUnsafePointer(to: rhs) { r in
+                    srtLessTE(l, lDesc, r, o, oDesc, stream)
                 }
             }
         }
@@ -146,6 +230,9 @@ extension CudaQueue {
     }
 
     //--------------------------------------------------------------------------
+    // lessOrEqual
+
+    // lessOrEqual tensor tensor
     @inlinable public func lessOrEqual<S,E>(
         _ lhs: Tensor<S,E>, 
         _ rhs: Tensor<S,E>,
@@ -154,15 +241,83 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_lessOrEqual(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "lessOrEqual(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtLessOrEqual(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtLessOrEqual(l, lDesc, r, rDesc, o, oDesc, stream)
                 }
             }
         }
         cpuFallback(status) { $0.lessOrEqual(lhs, rhs, &out) }
+    }
+
+    // less tensor Element
+    @inlinable public func lessOrEqual<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: E.Value,
+        _ out: inout Tensor<S,Bool>
+    ) where E.Value: Comparable {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_lessOrEqual(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "lessOrEqual(\(lhs.name), \(rhs))",
+                    categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                withUnsafePointer(to: rhs) { r in
+                    srtLessOrEqualTE(l, lDesc, r, o, oDesc, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.lessOrEqual(lhs, rhs, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    // min
+
+    // min tensor tensor
+    @inlinable public func min<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Comparable {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
+        guard useGpu else { cpu_min(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "min(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtMin(l, lDesc, r, rDesc, o, oDesc, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.min(lhs, rhs, &out) }
+    }
+
+    // min tensor Element
+    @inlinable public func min<S,E>(
+        _ lhs: Tensor<S,E>, 
+        _ rhs: E.Value,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Comparable {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_min(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "min(\(lhs.name), \(rhs))", categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                withUnsafePointer(to: rhs) { r in
+                    srtMinTE(l, lDesc, r, o, oDesc, stream)
+                }
+            }
+        }
+        cpuFallback(status) { $0.min(lhs, rhs, &out) }
     }
 
     //--------------------------------------------------------------------------
@@ -174,35 +329,37 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_max(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "max(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtMax(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtMax(l, lDesc, r, rDesc, o, oDesc, stream)
                 }
             }
         }
         cpuFallback(status) { $0.max(lhs, rhs, &out) }
     }
 
-    //--------------------------------------------------------------------------
-    @inlinable public func min<S,E>(
+    // max tensor Element
+    @inlinable public func max<S,E>(
         _ lhs: Tensor<S,E>, 
-        _ rhs: Tensor<S,E>,
+        _ rhs: E.Value,
         _ out: inout Tensor<S,E>
     ) where E.Value: Comparable {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
-        assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
-        guard useGpu else { cpu_min(lhs, rhs, &out); return }
+        guard useGpu else { cpu_max(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "max(\(lhs.name), \(rhs))", categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtMin(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                withUnsafePointer(to: rhs) { r in
+                    srtMaxTE(l, lDesc, r, o, oDesc, stream)
                 }
             }
         }
-        cpuFallback(status) { $0.min(lhs, rhs, &out) }
+        cpuFallback(status) { $0.max(lhs, rhs, &out) }
     }
 
     //--------------------------------------------------------------------------
@@ -214,11 +371,13 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_notEqual(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "notEqual(\(lhs.name), \(rhs.name))",
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtNotEqual(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtNotEqual(l, lDesc, r, rDesc, o, oDesc, stream)
                 }
             }
         }
@@ -234,11 +393,13 @@ extension CudaQueue {
         assert(out.isContiguous, _messageElementsMustBeContiguous)
         assert(lhs.order == rhs.order, _messageTensorOrderMismatch)
         guard useGpu else { cpu_or(lhs, rhs, &out); return }
+        diagnostic(.queueGpu, "or(\(lhs.name), \(rhs.name))", 
+                    categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
-            lhs.withTensor(using: self) { lData, l in
-                rhs.withTensor(using: self) { rData, r in
-                    srtOr(lData, l, rData, r, oData, o, stream)
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            lhs.withTensor(using: self) { l, lDesc in
+                rhs.withTensor(using: self) { r, rDesc in
+                    srtOr(l, lDesc, r, rDesc, o, oDesc, stream)
                 }
             }
         }
@@ -256,16 +417,235 @@ extension CudaQueue {
         assert(x.order == y.order && x.order == condition.order,
                _messageTensorOrderMismatch)
         guard useGpu else { cpu_replace(x, y, condition, &out); return }
+        diagnostic(.queueGpu, 
+            "replace(x: \(x.name), y: \(y.name), condition: \(condition.name))",
+            categories: .queueGpu)
 
-        let status = out.withMutableTensor(using: self) { oData, o in
+        let status = out.withMutableTensor(using: self) { o, oDesc in
             x.withTensor(using: self) { xData, x in
                 y.withTensor(using: self) { yData, y in
                     condition.withTensor(using: self) { cData, c in
-                        srtReplace(xData, x, yData, y, cData, c, oData, o, stream)
+                        srtReplace(xData, x, yData, y, cData, c, o, oDesc, stream)
                     }
                 }
             }
         }
         cpuFallback(status) { $0.replace(x, y, condition, &out) }
+    }
+
+    //==========================================================================
+    @inlinable func vjpMin<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: Tensor<S,E>, 
+        _ scale: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMin(x, y, scale, &out); return }
+        diagnostic(.queueGpu, "vjpMin(\(x.name), \(y.name), \(scale.name))",
+                   categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            x.withTensor(using: self) { x, xDesc in
+                y.withTensor(using: self) { y, yDesc in
+                    scale.withTensor(using: self) { s, sDesc in
+                        srtVjpMin(x, xDesc, y, yDesc, s, sDesc, o, oDesc, stream)
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMin(x, y, scale, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func vjpMin<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: E.Value, 
+        _ scale: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMin(x, y, scale, &out); return }
+        diagnostic(.queueGpu, "vjpMin(\(x.name), \(y), \(scale.name))",
+                   categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            x.withTensor(using: self) { x, xDesc in
+                withUnsafePointer(to: y) { y in
+                    scale.withTensor(using: self) { s, sDesc in
+                        srtVjpMinTE(x, xDesc, y, s, sDesc, o, oDesc, stream)
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMin(x, y, scale, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func vjpMin<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: Tensor<S,E>, 
+        _ scale: Tensor<S,E>,
+        _ outT: inout Tensor<S,E>, 
+        _ outF: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(outT.isContiguous && outF.isContiguous,
+               _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMin(x, y, scale, &outT, &outF); return }
+        diagnostic(.queueGpu, "vjpMin(\(x.name), \(y.name), \(scale.name))",
+                   categories: .queueGpu)
+        var outFShared = outF.shared(using: self)
+
+        let status = outT.withMutableTensor(using: self) { oT, oTDesc in
+            outFShared.withMutableTensor(using: self) { oF, oFDesc in
+                x.withTensor(using: self) { x, xDesc in
+                    y.withTensor(using: self) { y, yDesc in
+                        scale.withTensor(using: self) { s, sDesc in
+                            srtVjpMinOO(x, xDesc, y, yDesc, s, sDesc, 
+                                        oT, oTDesc, oF, oFDesc, stream)
+                        }
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMin(x, y, scale, &outT, &outF) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func vjpMin<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: E.Value, 
+        _ scale: Tensor<S,E>,
+        _ outT: inout Tensor<S,E>, 
+        _ outF: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(outT.isContiguous && outF.isContiguous,
+               _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMin(x, y, scale, &outT, &outF); return }
+        diagnostic(.queueGpu, "vjpMin(\(x.name), \(y), \(scale.name))",
+                   categories: .queueGpu)
+        var outFShared = outF.shared(using: self)
+
+        let status = outT.withMutableTensor(using: self) { oT, oTDesc in
+            outFShared.withMutableTensor(using: self) { oF, oFDesc in
+                x.withTensor(using: self) { x, xDesc in
+                    withUnsafePointer(to: y) { y in
+                        scale.withTensor(using: self) { s, sDesc in
+                            srtVjpMinTEOO(x, xDesc, y, s, sDesc, 
+                                          oT, oTDesc, oF, oFDesc, stream)
+                        }
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMin(x, y, scale, &outT, &outF) }
+    }
+
+    //==========================================================================
+    @inlinable func vjpMax<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: Tensor<S,E>, 
+        _ scale: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMax(x, y, scale, &out); return }
+        diagnostic(.queueGpu, "vjpMax(\(x.name), \(y.name), \(scale.name))",
+                   categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            x.withTensor(using: self) { x, xDesc in
+                y.withTensor(using: self) { y, yDesc in
+                    scale.withTensor(using: self) { s, sDesc in
+                        srtVjpMax(x, xDesc, y, yDesc, s, sDesc, o, oDesc, stream)
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMax(x, y, scale, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func vjpMax<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: E.Value, 
+        _ scale: Tensor<S,E>,
+        _ out: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(out.isContiguous, _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMax(x, y, scale, &out); return }
+        diagnostic(.queueGpu, "vjpMax(\(x.name), \(y), \(scale.name))",
+                   categories: .queueGpu)
+
+        let status = out.withMutableTensor(using: self) { o, oDesc in
+            x.withTensor(using: self) { x, xDesc in
+                withUnsafePointer(to: y) { y in
+                    scale.withTensor(using: self) { s, sDesc in
+                        srtVjpMaxTE(x, xDesc, y, s, sDesc, o, oDesc, stream)
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMax(x, y, scale, &out) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func vjpMax<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: Tensor<S,E>, 
+        _ scale: Tensor<S,E>,
+        _ outT: inout Tensor<S,E>, 
+        _ outF: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(outT.isContiguous && outF.isContiguous,
+               _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMax(x, y, scale, &outT, &outF); return }
+        diagnostic(.queueGpu, "vjpMax(\(x.name), \(y.name), \(scale.name))",
+                   categories: .queueGpu)
+        var outFShared = outF.shared(using: self)
+
+        let status = outT.withMutableTensor(using: self) { oT, oTDesc in
+            outFShared.withMutableTensor(using: self) { oF, oFDesc in
+                x.withTensor(using: self) { x, xDesc in
+                    y.withTensor(using: self) { y, yDesc in
+                        scale.withTensor(using: self) { s, sDesc in
+                            srtVjpMaxOO(x, xDesc, y, yDesc, s, sDesc, 
+                                        oT, oTDesc, oF, oFDesc, stream)
+                        }
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMax(x, y, scale, &outT, &outF) }
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable func vjpMax<S,E>(
+        _ x: Tensor<S,E>, 
+        _ y: E.Value, 
+        _ scale: Tensor<S,E>,
+        _ outT: inout Tensor<S,E>, 
+        _ outF: inout Tensor<S,E>
+    ) where E.Value: Comparable & Numeric {
+        assert(outT.isContiguous && outF.isContiguous,
+               _messageElementsMustBeContiguous)
+        guard useGpu else { cpu_vjpMax(x, y, scale, &outT, &outF); return }
+        diagnostic(.queueGpu, "vjpMax(\(x.name), \(y), \(scale.name))",
+                   categories: .queueGpu)
+        var outFShared = outF.shared(using: self)
+
+        let status = outT.withMutableTensor(using: self) { oT, oTDesc in
+            outFShared.withMutableTensor(using: self) { oF, oFDesc in
+                x.withTensor(using: self) { x, xDesc in
+                    withUnsafePointer(to: y) { y in
+                        scale.withTensor(using: self) { s, sDesc in
+                            srtVjpMaxTEOO(x, xDesc, y, s, sDesc, 
+                                          oT, oTDesc, oF, oFDesc, stream)
+                        }
+                    }
+                }
+            }
+        }
+        cpuFallback(status) { $0.vjpMax(x, y, scale, &outT, &outF) }
     }
 }

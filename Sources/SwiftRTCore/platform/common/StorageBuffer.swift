@@ -33,6 +33,9 @@ public protocol StorageBuffer: class, Logging {
     var isReadOnly: Bool { get }
     /// `true` if this buffer is a reference to an application managed buffer
     var isReference: Bool { get }
+    /// `true` if the tensor value is zero.
+    // Note: This is used to minimize the AD zero materialization design problem
+    var isZero: Bool { get }
     /// the buffer name used in diagnostic messages
     var name: String { get set }
     
@@ -64,7 +67,7 @@ public protocol StorageBuffer: class, Logging {
     
     //--------------------------------------------------------------------------
     /// `init(type:other:queue:`
-    /// creates a copy of the storage using `Context.currentQueue`
+    /// creates a copy of the storage using `currentQueue`
     /// - Parameters:
     ///  - type: the type of element to copy
     ///  - other: the storage to copy
@@ -72,7 +75,7 @@ public protocol StorageBuffer: class, Logging {
     init<Element>(
         type: Element.Type,
         copying other: Self,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     )
     
     //--------------------------------------------------------------------------
@@ -127,7 +130,7 @@ public protocol StorageBuffer: class, Logging {
         type: Element.Type,
         at index: Int,
         count: Int,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) -> UnsafeBufferPointer<Element>
 
     //--------------------------------------------------------------------------
@@ -145,7 +148,7 @@ public protocol StorageBuffer: class, Logging {
         type: Element.Type,
         at index: Int,
         count: Int,
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) -> UnsafeMutableBufferPointer<Element>
     
     //--------------------------------------------------------------------------
@@ -156,10 +159,7 @@ public protocol StorageBuffer: class, Logging {
 
 //==============================================================================
 // convenience extensions
-//
 public extension StorageBuffer {
-    /// the name used to identify the tensor in diagnostic messages
-    @inlinable var diagnosticName: String { "\(name)(\(id))" }
     /// used for unit tests. `true` if a read/write operation caused
     /// memory to be copied between devices
     @inlinable var testLastAccessCopiedDeviceMemory: Bool { false }
@@ -191,11 +191,6 @@ public extension StorageBuffer {
                "Buffer size is not even multiple of Element type")
         return byteCount / MemoryLayout<Element>.size
     }
-    
-    //--------------------------------------------------------------------------
-    /// waitForCompletion
-    /// blocks the caller until pending write operations have completed
-    @inlinable func waitForCompletion() { }
 }
 
 //==============================================================================

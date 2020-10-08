@@ -45,7 +45,7 @@ public final class CudaQueue: DeviceQueue, CpuFunctions {
         queueMode: DeviceQueueMode,
         useGpu: Bool
     ) {
-        self.id = Context.nextQueueId
+        self.id = Platform.queueId.next
         self.name = name
         self.deviceIndex = deviceIndex
         self.gpuId = Swift.max(0, deviceIndex - 1)
@@ -68,7 +68,7 @@ public final class CudaQueue: DeviceQueue, CpuFunctions {
         cudnn = CudnnHandle(gpuId: gpuId, using: stream)
         cublas = CublasHandle()
 
-        diagnostic("\(createString) queue: \(name)", categories: .queueAlloc)
+        diagnostic(.create, "queue: \(name)", categories: .queueAlloc)
     }
     
     //--------------------------------------------------------------------------
@@ -95,7 +95,14 @@ public final class CudaQueue: DeviceQueue, CpuFunctions {
     }
 
     //--------------------------------------------------------------------------
-    /// copy
+    // delay
+    @inlinable public func delay(_ interval: TimeInterval) {
+        guard useGpu else { cpu_delay(interval); return }
+        srtDelayStream(interval, stream)
+    }
+
+    //--------------------------------------------------------------------------
+    // copyAsync
     @inlinable public func copyAsync(
         from src: DeviceMemory, 
         to dst: DeviceMemory
@@ -136,17 +143,61 @@ public final class CudaQueue: DeviceQueue, CpuFunctions {
         }
     }
 
-    //==========================================================================
-    /// createActivation
-//    public override func createActivation<T>(
-//        x: T,
-//        y: inout T,
-//        mode: ActivationType,
-//        nan: NanPropagation,
-//        reluCeiling: Double = 0) throws -> ActivationInferring<T>
-//        where T: TensorView, T.Element: ScalarElement & FloatingPoint
-//    {
-//        return try CudaActivationInferring(x: x, y: &y, mode: mode,
-//                                           nan: nan, reluCeiling: reluCeiling)
-//    }
+    //--------------------------------------------------------------------------
+    @inlinable public func recordEvent() -> CudaEvent {
+        let event = CudaEvent(recordedOn: self)
+        if useGpu {
+            cudaCheck(cudaEventRecord(event.handle, stream))
+        } else {
+            if mode == .async {
+                queue.async(group: group) {
+                    event.signal()
+                }
+            }
+        }
+        return event
+    }
+    
+    //--------------------------------------------------------------------------
+    /// wait(for event:
+    /// causes this queue to wait until the event has occurred
+    @inlinable public func wait(for event: CudaEvent) {
+        if useGpu {
+            cudaCheck(cudaStreamWaitEvent(stream, event.handle, 0))
+        } else {
+            if mode == .sync {
+                event.wait()
+            } else {
+                queue.async(group: group) {
+                    event.wait()
+                }
+            }
+        }
+    }
+    
+    //--------------------------------------------------------------------------
+    // waitForCompletion
+    // the synchronous queue completes work as it is queued,
+    // so it is always complete
+    @inlinable public func waitForCompletion() {
+        if useGpu {
+            cudaCheck(cudaStreamSynchronize(stream))
+        } else if mode == .async {
+            group.wait()
+        }
+    }
+}
+
+//==============================================================================
+extension CudaQueue {
+    @inlinable public func kernel<S,AE,RE>(
+        _ a: Tensor<S,AE>,
+        _ out: inout Tensor<S,RE>,
+        _ opName: String,
+        _ op: @escaping (AE.Value, RE.Value) -> RE.Value
+    ) {
+        guard useGpu else { cpu_kernel(a, &out, opName, op); return }
+        
+        cpuFallback(cudaErrorNotSupported) { $0.kernel(a, &out, opName, op) }
+    }
 }

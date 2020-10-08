@@ -90,7 +90,7 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
     public var bwdFilterAlgo: cudnnConvolutionBwdFilterAlgo_t
     public var bwdFilterWorkspaceSize = 0
     public var bwdFilterWorkspace: DeviceMemory?
-    public let logCategories: LogCategories = [.initialize]
+    public let logCategories: LogCategories = [.setup]
     
     //--------------------------------------------------------------------------
     // initializer
@@ -114,7 +114,7 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
         // TODO: change this when devices have fixed collections of queues
         // initialization can create workspaces on the devices
         // associated with the queues, so we hold on to them
-        let defaultQueue = Context.currentQueue
+        let defaultQueue = currentQueue
         self.dataQueue = defaultQueue
         self.filterBiasBackQueue = defaultQueue
 
@@ -144,11 +144,12 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
     @inlinable public override func forward(
         x: Data,
         filter: Filter,
-        bias: Bias
+        bias: Bias,
+        mode: EvaluationMode
     ) -> Data {
         // setup any time the input shape changes
         if x.shape != inputShape {
-            setupForward(x, filter, bias)
+            setupForward(x, filter, bias, mode)
         }
 
         cudaCheck(cudnnConvolutionBiasActivationForward(
@@ -197,7 +198,8 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
         bias: Bias,
         biasDiff: inout Bias,
         x: Data,
-        xDiff: inout Data
+        xDiff: inout Data,
+        mode: EvaluationMode
     ) {
         // data
         cudaCheck(cudnnConvolutionBackwardData(
@@ -267,7 +269,8 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
     @inlinable public func setupForward(
         _ x: Data,
         _ filter: Filter,
-        _ bias: Bias
+        _ bias: Bias,
+        _ mode: EvaluationMode
     ) {
         xTensorDescriptor = x.createTensorDescriptor()
         filterDescriptor = FilterDescriptor(filter)
@@ -275,8 +278,8 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
 
         //----------------------------------
         // create convolution descriptor
-        let convolutionStorageElementType: StorageElementType =
-            Element.type == .real64F ? .real64F : .real32F
+        let convolutionStorageElementType: cudnnDataType_t =
+            Element.type == real64F ? CUDNN_DATA_DOUBLE : CUDNN_DATA_FLOAT
 
         let pad = (padding == .valid) ? Shape.zero : (filter.shape / 2)
 
@@ -305,7 +308,7 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
         yTensorDescriptor = x.createTensorDescriptor(asShape: yShape)
         selectForwardAlgorithm(x: x, properties: properties)
 
-        if Context.isTraining {
+        if mode == .training {
             selectBackwardAlgorithm(x: x, properties: properties)
         }
     }
@@ -399,7 +402,7 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
         let alg = ConvolutionFwdAlgorithm(cudnn: fwdAlgo)
 
         if willLog(level: .diagnostic) && properties.forwardAlgorithm != alg {
-            diagnostic("using forward algorithm: " +
+            diagnostic(.setup, "using forward algorithm: " +
                 "\(alg)  workspace size: \(fwdWorkspaceSize)",
                 categories: logCategories)
         }
@@ -496,7 +499,7 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
         if willLog(level: .diagnostic) &&
             properties.backwardDataAlgorithm != dataAlg
         {
-            diagnostic("using backward data algorithm: " +
+            diagnostic(.setup, "using backward data algorithm: " +
                 "\(dataAlg)  workspace size: \(bwdDataWorkspaceSize)",
                 categories: logCategories)
         }
@@ -589,7 +592,7 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
         if willLog(level: .diagnostic) &&
             properties.backwardFilterAlgorithm != filterAlg
         {
-            diagnostic("using backward filter algorithm: " +
+            diagnostic(.setup, "using backward filter algorithm: " +
                 "\(filterAlg)  workspace size: \(bwdFilterWorkspaceSize)",
                 categories: logCategories)
         }
@@ -618,15 +621,15 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
 
         // report
         if willLog(level: .diagnostic) {
-            diagnostic("", categories: logCategories)
-            diagnostic("find forward algorithms",
+            diagnostic(.setup, "", categories: logCategories)
+            diagnostic(.setup, "find forward algorithms",
                        categories: logCategories, trailing: "-")
 
             for item in results {
                 let alg = ConvolutionFwdAlgorithm(cudnn: item.algo)
                 let det = item.determinism == CUDNN_DETERMINISTIC ?
                     "deterministic" : "non-deterministic"
-                diagnostic("Algorithm: \(alg)  time: \(item.time) " +
+                diagnostic(.setup, "Algorithm: \(alg)  time: \(item.time) " +
                     "required memory: \(item.memory)  \(det)",
                     categories: logCategories)
             }
@@ -658,15 +661,15 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
             &results))
 
         if willLog(level: .diagnostic) {
-            diagnostic("", categories: logCategories)
-            diagnostic("find backward data algorithms",
+            diagnostic(.setup, "", categories: logCategories)
+            diagnostic(.setup, "find backward data algorithms",
                        categories: logCategories, trailing: "-")
 
             for item in results {
                 let alg = ConvolutionBwdDataAlgorithm(cudnn: item.algo)
                 let det = item.determinism == CUDNN_DETERMINISTIC ?
                     "deterministic" : "non-deterministic"
-                diagnostic("Algorithm: \(alg)  time: \(item.time) " +
+                diagnostic(.setup, "Algorithm: \(alg)  time: \(item.time) " +
                     "required memory: \(item.memory)  \(det)",
                     categories: logCategories)
             }
@@ -698,15 +701,15 @@ where Shape: TensorShape, Element: StorageElement, FilterElement: StorageElement
             &results))
 
         if willLog(level: .diagnostic) {
-            diagnostic("", categories: logCategories)
-            diagnostic("find backward filter algorithms",
+            diagnostic(.setup, "", categories: logCategories)
+            diagnostic(.setup, "find backward filter algorithms",
                        categories: logCategories, trailing: "-")
 
             for item in results {
                 let alg = ConvolutionBwdFilterAlgorithm(cudnn: item.algo)
                 let det = item.determinism == CUDNN_DETERMINISTIC ?
                     "deterministic" : "non-deterministic"
-                diagnostic("Algorithm: \(alg)  time: \(item.time) " +
+                diagnostic(.setup, "Algorithm: \(alg)  time: \(item.time) " +
                     "required memory: \(item.memory)  \(det)",
                     categories: logCategories)
             }
@@ -819,7 +822,7 @@ public final class ConvolutionDescriptor<Shape: TensorShape> {
 
     // initializers
     @inlinable public init(
-        scalarType: StorageElementType,
+        scalarType: cudnnDataType_t,
         rank: Int,
         padding: Shape,
         strides: Shape,
@@ -839,7 +842,7 @@ public final class ConvolutionDescriptor<Shape: TensorShape> {
             strides.asInt32,
             dilations.asInt32,
             mode.cudnn,
-            scalarType.cudnn))
+            scalarType))
     }
 
     @inlinable deinit {
