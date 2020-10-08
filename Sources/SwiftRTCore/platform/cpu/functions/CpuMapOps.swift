@@ -22,665 +22,496 @@ import Numerics
 // pointers to the elements. This is to avoid ARC copy on write when
 // capturing for asynchrnous execution. The async operations are safe,
 // because tensor storage lifetime is gauranteed by the queue.
-// The `execute` function `out` parameter is mutatated but not `inout` to
-// handle async capture requirements.
 extension DeviceQueue {
 
     //==========================================================================
-    // generator
+    // caller defined generator
     @inlinable func mapOp<S,E>(
-        _ opName: String,
-        _ r: inout Tensor<S,E>,
+        _ output: inout Tensor<S,E>,
         _ op: @escaping () -> E.Value
     ) {
-        // the op
-        func execute<O: MutableCollection>(
-            _ out: O,
-            _ op: @escaping () -> O.Element
-        ) {
-            var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    out.indices.forEach { out[$0] = op() }
-                }
-            } else {
+        var out = output.mutableBuffer
+
+        if mode == .sync {
+            out.indices.forEach { out[$0] = op() }
+        } else {
+            queue.async(group: group) {
                 out.indices.forEach { out[$0] = op() }
             }
-        }
-        
-        // queue data transfers and execute
-        if r.isBufferIterable {
-            execute(r.mutableBuffer, op)
-        } else {
-            execute(r.mutableElements, op)
         }
     }
 
     //==========================================================================
-    // range
-    @inlinable func mapOp<S,E,C>(
-        _ opName: String,
-        _ elements: C,
-        _ r: inout Tensor<S,E>
-    ) where C: Collection, C.Element == E.Value {
-        // the op
-        func execute<I0: Collection, O: MutableCollection>(
-            _ i0: I0,
+    // range generator
+    @inlinable func mapOp<S,E>(
+        from first: E.Value,
+        to last: E.Value,
+        by step: E.Value,
+        _ output: inout Tensor<S,E>
+    ) where E.Value: Numeric {
+
+        func execute<O: MutableCollection>(
             _ out: O
-        ) where I0.Element == O.Element {
+        ) where O.Element == E.Value {
             var out = out
-            if mode == .async {
-                queue.async(group: group) {
-                    diagnostic(.queue, "\(opName) on \(name)",
-                               categories: .queueFunc)
-                    zip(out.indices, i0).forEach { out[$0] = $1 }
+            if mode == .sync {
+                var io = out.indices.startIndex
+                for i in 0..<(out.count - 1) {
+                    out[io] = first + O.Element(exactly: i)! * step
+                    io = out.index(after: io)
                 }
+                out[io] = last
             } else {
-                zip(out.indices, i0).forEach { out[$0] = $1 }
+                queue.async(group: group) {
+                    var io = out.indices.startIndex
+                    for i in 0..<(out.count - 1) {
+                        out[io] = first + O.Element(exactly: i)! * step
+                        io = out.index(after: io)
+                    }
+                    out[io] = last
+                }
             }
         }
-        
-        // queue data transfers and execute
-        if r.isBufferIterable {
-            execute(elements, r.mutableBuffer)
+
+        if output.order == .row {
+            execute(output.mutableBuffer)
         } else {
-            execute(elements, r.mutableElements)
+            execute(output.mutableElements)
         }
     }
-    
+
     //==========================================================================
     // inplace
     @inlinable func mapOp<S,E>(
-        _ opName: String,
-        _ r: inout Tensor<S,E>,
+        _ output: inout Tensor<S,E>,
         _ op: @escaping (E.Value) -> E.Value
     ) {
-        // the op
-        func execute<O: MutableCollection>(
-            _ out: O,
-            _ op: @escaping (O.Element) -> O.Element
-        ) {
-            var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    out.indices.forEach { out[$0] = op(out[$0]) }
-                }
-            } else {
+        var out = output.mutableBuffer
+        
+        if mode == .sync {
+            out.indices.forEach { out[$0] = op(out[$0]) }
+        } else {
+            queue.async(group: group) {
                 out.indices.forEach { out[$0] = op(out[$0]) }
             }
         }
-        
-        // queue data transfers and execute
-        if r.isBufferIterable {
-            execute(r.mutableBuffer, op)
-        } else {
-            execute(r.mutableElements, op)
-        }
     }
-    
+
     //==========================================================================
-    // reduction
-    @inlinable func mapOp<S,E,RE>(
-        _ opName: String,
+    // reduction along axes
+    @inlinable func reduceAlongAxes<S,E,RE>(
         _ a: Tensor<S,E>,
-        _ r: inout Tensor<S,RE>,
+        _ output: inout Tensor<S,RE>,
         _ op: @escaping (RE.Value, E.Value) -> RE.Value
     ) {
-        precondition(a.order == r.order)
-        // the op
-        func execute<I0: Collection, O: MutableCollection>(
-            _ i0: I0, _ out: O,
-            _ op: @escaping (O.Element, I0.Element) -> O.Element
+        func execute<A: Collection, O: MutableCollection>(
+            _ a: A,
+            _ out: O,
+            _ op: @escaping (O.Element, A.Element) -> O.Element
         ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    zip(out.indices, i0).forEach { out[$0] = op(out[$0], $1) }
-                }
+            if mode == .sync {
+                zip(out.indices, a).forEach { out[$0] = op(out[$0], $1) }
             } else {
-                zip(out.indices, i0).forEach { out[$0] = op(out[$0], $1) }
+                queue.async(group: group) {
+                    zip(out.indices, a).forEach { out[$0] = op(out[$0], $1) }
+                }
             }
         }
         
         // repeat `r`s to match `a`'s shape to enable operations along axes
-        let rMutableElements = LogicalElements<S,RE>(
-                a.count,
-                a.shape,
-                repeatedStrides(matching: r, to: a.shape),
-                r.storage,
-                r.storageBase,
-                r.order,
-                r.spanCount)
+        let mutableElements = LogicalElements<S,RE>(
+            a.count,
+            a.shape,
+            repeatedStrides(matching: output, to: a.shape),
+            output.storage,
+            output.storageBase,
+            output.order,
+            output.spanCount)
         
-        rMutableElements.prepareForReadWrite()
+        mutableElements.prepareForReadWrite()
         
-        if a.isBufferIterable {
-            execute(a.buffer, rMutableElements, op)
+        if a.isContiguous {
+            execute(a.buffer, mutableElements, op)
         } else {
-            execute(a.elements, rMutableElements, op)
+            execute(a.elements, mutableElements, op)
+        }
+    }
+
+    //==========================================================================
+    // mapOp tensor
+    @inlinable public func mapOp<S,E,RE>(
+        _ a: Tensor<S,E>,
+        _ output: inout Tensor<S,RE>,
+        _ op: @escaping (E.Value, RE.Value) -> RE.Value
+    ) {
+        func execute<A: Collection, O: MutableCollection>(
+            _ a: A,
+            _ out: O,
+            _ op: @escaping (A.Element, O.Element) -> O.Element
+        ) {
+            var out = out
+            if mode == .sync {
+                zip(out.indices, a).forEach { out[$0] = op($1, out[$0]) }
+            } else {
+                queue.async(group: group) {
+                    zip(out.indices, a).forEach { out[$0] = op($1, out[$0]) }
+                }
+            }
+        }
+        
+        // check order because they will not match for order conversion ops
+        if a.order == output.order {
+            if a.isContiguous {
+                if output.isContiguous {
+                    execute(a.buffer, output.mutableBuffer, op)
+                } else {
+                    execute(a.buffer, output.mutableElements, op)
+                }
+            } else {
+                if output.isContiguous {
+                    execute(a.elements, output.mutableBuffer, op)
+                } else {
+                    execute(a.elements, output.mutableElements, op)
+                }
+            }
+        } else {
+            execute(a.elements, output.mutableElements, op)
         }
     }
     
     //==========================================================================
-    // mapOp 1
-    @inlinable func mapOp<S,E,RE>(
-        _ opName: String,
+    // mapOp tensor
+    @inlinable public func mapOp<S,E,RE>(
         _ a: Tensor<S,E>,
-        _ r: inout Tensor<S,RE>,
+        _ output: inout Tensor<S,RE>,
         _ op: @escaping (E.Value) -> RE.Value
     ) {
-        // the op
-        func execute<I0: Collection, O: MutableCollection>(
-            _ i0: I0, _ out: O,
-            _ op: @escaping (I0.Element) -> O.Element
+        func execute<A: Collection, O: MutableCollection>(
+            _ a: A,
+            _ out: O,
+            _ op: @escaping (A.Element) -> O.Element
         ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    zip(out.indices, i0).forEach { out[$0] = op($1) }
-                }
+            if mode == .sync {
+                zip(out.indices, a).forEach { out[$0] = op($1) }
             } else {
-                zip(out.indices, i0).forEach { out[$0] = op($1) }
+                queue.async(group: group) {
+                    zip(out.indices, a).forEach { out[$0] = op($1) }
+                }
             }
         }
 
-        // check layouts because they will not match for order conversion ops
-        if a.order == r.order {
-            if a.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.buffer, r.mutableBuffer, op)
+        // check order because they will not match for order conversion ops
+        if a.order == output.order {
+            if a.isContiguous {
+                if output.isContiguous {
+                    execute(a.buffer, output.mutableBuffer, op)
                 } else {
-                    execute(a.buffer, r.mutableElements, op)
+                    execute(a.buffer, output.mutableElements, op)
                 }
             } else {
-                if r.isBufferIterable {
-                    execute(a.elements, r.mutableBuffer, op)
+                if output.isContiguous {
+                    execute(a.elements, output.mutableBuffer, op)
                 } else {
-                    execute(a.elements, r.mutableElements, op)
+                    execute(a.elements, output.mutableElements, op)
                 }
             }
         } else {
-            execute(a.elements, r.mutableElements, op)
+            execute(a.elements, output.mutableElements, op)
         }
     }
-    
+
     //==========================================================================
-    // mapOp 2
-    @inlinable func mapOp<S,E,RE>(
-        _ opName: String,
-        _ a: Tensor<S,E>,
-        _ b: Tensor<S,E>,
-        _ r: inout Tensor<S,RE>,
-        _ op: @escaping (E.Value, E.Value) -> RE.Value
+    // mapOp tensor tensor
+    @inlinable public func mapOp<S,AE,BE,RE>(
+        _ a: Tensor<S,AE>,
+        _ b: Tensor<S,BE>,
+        _ output: inout Tensor<S,RE>,
+        _ op: @escaping (AE.Value, BE.Value) -> RE.Value
     ) {
-        precondition(a.order == b.order && a.order == r.order,
-                     _messageLayoutsMustMatch)
-        // the op
-        func execute<I0: Collection, I1: Collection, O: MutableCollection>(
-            _ i0: I0, _ i1: I1, _ out: O,
-            _ op: @escaping (I0.Element, I1.Element) -> O.Element
+        assert(a.order == b.order && a.order == output.order &&
+               output.isContiguous, _messageOrdersMustMatch)
+
+        func execute<A: Collection, B: Collection, O: MutableCollection>(
+            _ a: A, _ b: B, _ out: O,
+            _ op: @escaping (A.Element, B.Element) -> O.Element
         ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
+            if mode == .sync {
+                zip(out.indices, zip(a, b)).forEach {
+                    out[$0] = op($1.0, $1.1)
+                }
+            } else {
                 queue.async(group: group) {
-                    zip(out.indices, zip(i0, i1)).forEach {
+                    zip(out.indices, zip(a, b)).forEach {
                         out[$0] = op($1.0, $1.1)
                     }
                 }
-            } else {
-                zip(out.indices, zip(i0, i1)).forEach {
-                    out[$0] = op($1.0, $1.1)
-                }
             }
         }
         
-        if a.isBufferIterable {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.buffer, r.mutableBuffer, op)
-                } else {
-                    execute(a.buffer, b.buffer, r.mutableElements, op)
-                }
+        let out = output.mutableBuffer
+        if a.isContiguous {
+            if b.isContiguous {
+                execute(a.buffer, b.buffer, out, op)
             } else {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.elements, r.mutableBuffer, op)
-                } else {
-                    execute(a.buffer, b.elements, r.mutableElements, op)
-                }
+                execute(a.buffer, b.elements, out, op)
             }
         } else {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.elements, b.buffer, r.mutableBuffer, op)
-                } else {
-                    execute(a.elements, b.buffer, r.mutableElements, op)
-                }
+            if b.isContiguous {
+                execute(a.elements, b.buffer, out, op)
             } else {
-                if r.isBufferIterable {
-                    execute(a.elements, b.elements, r.mutableBuffer, op)
-                } else {
-                    execute(a.elements, b.elements, r.mutableElements, op)
-                }
+                execute(a.elements, b.elements, out, op)
             }
         }
     }
 
     //==========================================================================
-    // mapOpAdd
-    // 20% boost over passed in op
-    @inlinable func mapOpAdd<S,E>(
-        _ opName: String,
+    // mapOp tensor tensor Element
+    @inlinable func mapOp<S,E,RE>(
         _ a: Tensor<S,E>,
         _ b: Tensor<S,E>,
-        _ r: inout Tensor<S,E>
-    ) where E.Value: AdditiveArithmetic {
-        precondition(a.order == b.order && a.order == r.order,
-                     _messageLayoutsMustMatch)
+        _ c: E.Value,
+        _ output: inout Tensor<S,RE>,
+        _ op: @escaping (E.Value, E.Value, E.Value) -> RE.Value
+    ) {
+        assert(a.order == b.order && a.order == output.order &&
+               output.isContiguous, _messageOrdersMustMatch)
 
-        // the op
-        func execute<I0: Collection, I1: Collection, O: MutableCollection>(
-            _ i0: I0, _ i1: I1, _ out: O
-        ) where I0.Element: AdditiveArithmetic,
-                I0.Element == I1.Element, O.Element == I0.Element
-        {
+        func execute<A: Collection, B: Collection, O: MutableCollection>(
+            _ a: A, _ b: B, _ c: A.Element, _ out: O,
+            _ op: @escaping (A.Element, B.Element, A.Element) -> O.Element
+        ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    zip(out.indices, zip(i0, i1)).forEach {
-                        out[$0] = $1.0 + $1.1
-                    }
+            if mode == .sync {
+                zip(out.indices, zip(a, b)).forEach {
+                    out[$0] = op($1.0, $1.1, c)
                 }
             } else {
-                zip(out.indices, zip(i0, i1)).forEach {
-                    out[$0] = $1.0 + $1.1
+                queue.async(group: group) {
+                    zip(out.indices, zip(a, b)).forEach {
+                        out[$0] = op($1.0, $1.1, c)
+                    }
                 }
             }
         }
         
-        if a.isBufferIterable {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.buffer, r.mutableElements)
-                }
+        let out = output.mutableBuffer
+        if a.isContiguous {
+            if b.isContiguous {
+                execute(a.buffer, b.buffer, c, out, op)
             } else {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.elements, r.mutableElements)
-                }
+                execute(a.buffer, b.elements, c, out, op)
             }
         } else {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.elements, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.buffer, r.mutableElements)
-                }
+            if b.isContiguous {
+                execute(a.elements, b.buffer, c, out, op)
             } else {
-                if r.isBufferIterable {
-                    execute(a.elements, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.elements, r.mutableElements)
-                }
+                execute(a.elements, b.elements, c, out, op)
             }
         }
     }
 
     //==========================================================================
-    // mapOpSub
-    // 20% boost over passed in op
-    @inlinable func mapOpSub<S,E>(
-        _ opName: String,
+    // mapOp tensor element
+    @inlinable func mapOp<S,E,OE>(
         _ a: Tensor<S,E>,
-        _ b: Tensor<S,E>,
-        _ r: inout Tensor<S,E>
-    ) where E.Value: AdditiveArithmetic {
-        precondition(a.order == b.order && a.order == r.order)
-        // the op
-        func execute<I0: Collection, I1: Collection, O: MutableCollection>(
-            _ i0: I0, _ i1: I1, _ out: O
-        ) where I0.Element: AdditiveArithmetic,
-                I0.Element == I1.Element, O.Element == I0.Element
-        {
+        _ element: E.Value,
+        _ output: inout Tensor<S,OE>,
+        _ op: @escaping (E.Value, E.Value) -> OE.Value
+    ) {
+        func execute<A: Collection, O: MutableCollection>(
+            _ a: A, _ elt: A.Element, _ out: O,
+            _ op: @escaping (A.Element, A.Element) -> O.Element
+        ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    zip(out.indices, zip(i0, i1)).forEach {
-                        out[$0] = $1.0 - $1.1
-                    }
-                }
+            if mode == .sync {
+                zip(out.indices, a).forEach { out[$0] = op($1, elt) }
             } else {
-                zip(out.indices, zip(i0, i1)).forEach {
-                    out[$0] = $1.0 - $1.1
+                queue.async(group: group) {
+                    zip(out.indices, a).forEach { out[$0] = op($1, elt) }
                 }
             }
         }
         
-        if a.isBufferIterable {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.buffer, r.mutableElements)
-                }
-            } else {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.elements, r.mutableElements)
-                }
-            }
+        if a.isContiguous {
+            execute(a.buffer, element, output.mutableBuffer, op)
         } else {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.elements, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.buffer, r.mutableElements)
-                }
-            } else {
-                if r.isBufferIterable {
-                    execute(a.elements, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.elements, r.mutableElements)
-                }
-            }
+            execute(a.elements, element, output.mutableBuffer, op)
         }
     }
-    
+
     //==========================================================================
-    // mapOpMul
-    // 20% boost over passed in op
-    @inlinable func mapOpMul<S,E>(
-        _ opName: String,
+    // mapOp element tensor
+    @inlinable func mapOp<S,E,OE>(
+        _ element: E.Value,
         _ a: Tensor<S,E>,
-        _ b: Tensor<S,E>,
-        _ r: inout Tensor<S,E>
-    ) where E.Value: Numeric {
-        precondition(a.order == b.order && a.order == r.order)
-        // the op
-        func execute<I0: Collection, I1: Collection, O: MutableCollection>(
-            _ i0: I0, _ i1: I1, _ out: O
-        ) where I0.Element: Numeric,
-                I0.Element == I1.Element, O.Element == I0.Element
-        {
+        _ output: inout Tensor<S,OE>,
+        _ op: @escaping (E.Value, E.Value) -> OE.Value
+    ) {
+        func execute<A: Collection, O: MutableCollection>(
+            _ elt: A.Element, _ a: A, _ out: O,
+            _ op: @escaping (A.Element, A.Element) -> O.Element
+        ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    zip(out.indices, zip(i0, i1)).forEach {
-                        out[$0] = $1.0 * $1.1
-                    }
-                }
+            if mode == .sync {
+                zip(out.indices, a).forEach { out[$0] = op(elt, $1) }
             } else {
-                zip(out.indices, zip(i0, i1)).forEach {
-                    out[$0] = $1.0 * $1.1
+                queue.async(group: group) {
+                    zip(out.indices, a).forEach { out[$0] = op(elt, $1) }
                 }
             }
         }
         
-        if a.isBufferIterable {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.buffer, r.mutableElements)
-                }
-            } else {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.elements, r.mutableElements)
-                }
-            }
+        if a.isContiguous {
+            execute(element, a.buffer, output.mutableBuffer, op)
         } else {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.elements, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.buffer, r.mutableElements)
-                }
-            } else {
-                if r.isBufferIterable {
-                    execute(a.elements, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.elements, r.mutableElements)
-                }
-            }
+            execute(element, a.elements, output.mutableBuffer, op)
         }
     }
-    
+
     //==========================================================================
-    // mapOpDiv
-    // 20% boost over passed in op
-    @inlinable func mapOpDiv<S,E>(
-        _ opName: String,
-        _ a: Tensor<S,E>,
-        _ b: Tensor<S,E>,
-        _ r: inout Tensor<S,E>
-    ) where E.Value: AlgebraicField {
-        precondition(a.order == b.order && a.order == r.order)
-        // the op
-        func execute<I0: Collection, I1: Collection, O: MutableCollection>(
-            _ i0: I0, _ i1: I1, _ out: O
-        ) where I0.Element: AlgebraicField,
-                I0.Element == I1.Element, O.Element == I0.Element
-        {
-            var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
-                queue.async(group: group) {
-                    zip(out.indices, zip(i0, i1)).forEach {
-                        out[$0] = $1.0 / $1.1
-                    }
-                }
-            } else {
-                zip(out.indices, zip(i0, i1)).forEach {
-                    out[$0] = $1.0 / $1.1
-                }
-            }
-        }
-        
-        if a.isBufferIterable {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.buffer, r.mutableElements)
-                }
-            } else {
-                if r.isBufferIterable {
-                    execute(a.buffer, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.buffer, b.elements, r.mutableElements)
-                }
-            }
-        } else {
-            if b.isBufferIterable {
-                if r.isBufferIterable {
-                    execute(a.elements, b.buffer, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.buffer, r.mutableElements)
-                }
-            } else {
-                if r.isBufferIterable {
-                    execute(a.elements, b.elements, r.mutableBuffer)
-                } else {
-                    execute(a.elements, b.elements, r.mutableElements)
-                }
-            }
-        }
-   }
-    
-    //==========================================================================
-    // mapOp 3
-    @inlinable func mapOp<S,E0, E1, E2, R1>(
-        _ opName: String,
+    // mapOp tensor tensor tensor
+    @inlinable func mapOp<S,E0, E1, E2, OE>(
         _ a: Tensor<S,E0>,
         _ b: Tensor<S,E1>,
         _ c: Tensor<S,E2>,
-        _ r: inout Tensor<S,R1>,
-        _ op: @escaping (E0.Value, E1.Value, E2.Value) -> R1.Value
+        _ output: inout Tensor<S,OE>,
+        _ op: @escaping (E0.Value, E1.Value, E2.Value) -> OE.Value
     ) {
-        precondition(a.order == b.order && a.order == c.order &&
-                     a.order == r.order)
-        // the op
-        func execute<
-            I0: Collection,
-            I1: Collection,
-            I2: Collection,
-            O: MutableCollection
-        >(
-            _ i0: I0, _ i1: I1, _ i2: I2, _ out: O,
-            _ op: @escaping (I0.Element, I1.Element, I2.Element) -> O.Element
+        assert(a.order == b.order && a.order == c.order &&
+                a.order == output.order && output.isContiguous)
+
+        func execute<A: Collection, B: Collection, C: Collection,
+                     O: MutableCollection>(
+            _ a: A, _ b: B, _ c: C, _ out: O,
+            _ op: @escaping (A.Element, B.Element, C.Element) -> O.Element
         ) {
             var out = out
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
+            if mode == .sync {
+                zip(out.indices, zip(a, zip(b, c))).forEach {
+                    out[$0] = op($1.0, $1.1.0, $1.1.1)
+                }
+            } else {
                 queue.async(group: group) {
-                    zip(out.indices, zip(i0, zip(i1, i2))).forEach {
+                    zip(out.indices, zip(a, zip(b, c))).forEach {
                         out[$0] = op($1.0, $1.1.0, $1.1.1)
                     }
                 }
-            } else {
-                zip(out.indices, zip(i0, zip(i1, i2))).forEach {
-                    out[$0] = op($1.0, $1.1.0, $1.1.1)
-                }
             }
         }
         
-        if a.isBufferIterable {
-            if b.isBufferIterable {
-                if c.isBufferIterable {
-                    if r.isBufferIterable {
-                        execute(a.buffer, b.buffer, c.buffer, r.mutableBuffer, op)
-                    } else {
-                        execute(a.buffer, b.buffer, c.buffer, r.mutableElements, op)
-                    }
+        let out = output.mutableBuffer
+        if a.isContiguous {
+            if b.isContiguous {
+                if c.isContiguous {
+                    execute(a.buffer, b.buffer, c.buffer, out, op)
                 } else {
-                    if r.isBufferIterable {
-                        execute(a.buffer, b.buffer, c.elements, r.mutableBuffer, op)
-                    } else {
-                        execute(a.buffer, b.buffer, c.elements, r.mutableElements, op)
-                    }
+                    execute(a.buffer, b.buffer, c.elements, out, op)
                 }
             } else {
-                if c.isBufferIterable {
-                    if r.isBufferIterable {
-                        execute(a.buffer, b.elements, c.buffer, r.mutableBuffer, op)
-                    } else {
-                        execute(a.buffer, b.elements, c.buffer, r.mutableElements, op)
-                    }
+                if c.isContiguous {
+                    execute(a.buffer, b.elements, c.buffer, out, op)
                 } else {
-                    if r.isBufferIterable {
-                        execute(a.buffer, b.elements, c.elements, r.mutableBuffer, op)
-                    } else {
-                        execute(a.buffer, b.elements, c.elements, r.mutableElements, op)
-                    }
+                    execute(a.buffer, b.elements, c.elements, out, op)
                 }
             }
         } else {
-            if b.isBufferIterable {
-                if c.isBufferIterable {
-                    if r.isBufferIterable {
-                        execute(a.elements, b.buffer, c.buffer, r.mutableBuffer, op)
-                    } else {
-                        execute(a.elements, b.buffer, c.buffer, r.mutableElements, op)
-                    }
+            if b.isContiguous {
+                if c.isContiguous {
+                    execute(a.elements, b.buffer, c.buffer, out, op)
                 } else {
-                    if r.isBufferIterable {
-                        execute(a.elements, b.buffer, c.elements, r.mutableBuffer, op)
-                    } else {
-                        execute(a.elements, b.buffer, c.elements, r.mutableElements, op)
-                    }
+                    execute(a.elements, b.buffer, c.elements, out, op)
                 }
             } else {
-                if c.isBufferIterable {
-                    if r.isBufferIterable {
-                        execute(a.elements, b.elements, c.buffer, r.mutableBuffer, op)
-                    } else {
-                        execute(a.elements, b.elements, c.buffer, r.mutableElements, op)
-                    }
+                if c.isContiguous {
+                    execute(a.elements, b.elements, c.buffer, out, op)
                 } else {
-                    if r.isBufferIterable {
-                        execute(a.elements, b.elements, c.elements, r.mutableBuffer, op)
-                    } else {
-                        execute(a.elements, b.elements, c.elements, r.mutableElements, op)
-                    }
+                    execute(a.elements, b.elements, c.elements, out, op)
                 }
             }
         }
     }
     
     //==========================================================================
-    // mapOp 3
-    @inlinable func mapOp<S,E0, E1, E2, R1, R2>(
-        _ opName: String,
+    // mapOp tensor tensor tensor out out
+    @inlinable func mapOp<S,E0, E1, E2, O1, O2>(
         _ a: Tensor<S,E0>,
         _ b: Tensor<S,E1>,
         _ c: Tensor<S,E2>,
-        _ r1: inout Tensor<S,R1>,
-        _ r2: inout Tensor<S,R2>,
-        _ op: @escaping (E0.Value, E1.Value, E2.Value) -> (R1.Value, R2.Value)
+        _ output1: inout Tensor<S,O1>,
+        _ output2: inout Tensor<S,O2>,
+        _ op: @escaping (E0.Value, E1.Value, E2.Value) -> (O1.Value, O2.Value)
     ) {
-        //------------------------------------
-        // the actual operation. `out` is not `inout` because the operation
-        // will be deferred in async mode. This is safe because the operations
-        // are synchronized via the queue
-        func execute<
-            I0: Collection,
-            I1: Collection,
-            I2: Collection,
-            O1: MutableCollection,
-            O2: MutableCollection
-        >(
-            _ i0: I0, _ i1: I1, _ i2: I2, _ o1: O1, _ o2: O2,
-            _ op2: @escaping (I0.Element, I1.Element, I2.Element)
+        assert(a.isContiguous && b.isContiguous && c.isContiguous &&
+                output1.isContiguous && output2.isContiguous)
+
+        func execute<A: Collection, B: Collection, C: Collection,
+                     O1: MutableCollection, O2: MutableCollection>(
+            _ a: A, _ b: B, _ c: C, _ o1: O1, _ o2: O2,
+            _ op: @escaping (A.Element, B.Element, C.Element)
                 -> (O1.Element, O2.Element)
         ) {
             var o1 = o1, o2 = o2
-            if mode == .async {
-                diagnostic(.queue, "\(opName) on \(name)",
-                           categories: .queueFunc)
+            if mode == .sync {
+                zip(zip(o1.indices, o2.indices), zip(a, zip(b, c))).forEach {
+                    let (o1v, o2v) = op($1.0, $1.1.0, $1.1.1)
+                    o1[$0.0] = o1v
+                    o2[$0.1] = o2v
+                }
+            } else {
                 queue.async(group: group) {
-                    zip(zip(o1.indices, o2.indices), zip(i0, zip(i1, i2))).forEach
-                    {
-                        let (o1v, o2v) = op2($1.0, $1.1.0, $1.1.1)
+                    zip(zip(o1.indices, o2.indices), zip(a, zip(b, c))).forEach {
+                        let (o1v, o2v) = op($1.0, $1.1.0, $1.1.1)
                         o1[$0.0] = o1v
                         o2[$0.1] = o2v
                     }
                 }
-            } else {
-                zip(zip(o1.indices, o2.indices), zip(i0, zip(i1, i2))).forEach {
-                    let (o1v, o2v) = op2($1.0, $1.1.0, $1.1.1)
-                    o1[$0.0] = o1v
-                    o2[$0.1] = o2v
-                }
             }
         }
         
-        // execute right order combination
-        assert(a.isBufferIterable && b.isBufferIterable && c.isBufferIterable &&
-                r1.isBufferIterable && r2.isBufferIterable)
         execute(a.buffer, b.buffer, c.buffer,
-                r1.mutableBuffer, r2.mutableBuffer, op)
+                output1.mutableBuffer, output2.mutableBuffer, op)
+    }
+
+    //==========================================================================
+    // mapOp tensor tensor scalar out out
+    @inlinable func mapOp<S,E0, E1, E2, O1, O2>(
+        _ a: Tensor<S,E0>,
+        _ b: Tensor<S,E1>,
+        _ c: E2,
+        _ output1: inout Tensor<S,O1>,
+        _ output2: inout Tensor<S,O2>,
+        _ op: @escaping (E0.Value, E1.Value, E2) -> (O1.Value, O2.Value)
+    ) {
+        assert(a.isContiguous && b.isContiguous && 
+               output1.isContiguous && output2.isContiguous)
+
+        func execute<A: Collection, B: Collection, C,
+                     O1: MutableCollection, O2: MutableCollection>(
+            _ a: A, _ b: B, _ c: C, _ o1: O1, _ o2: O2,
+            _ op: @escaping (A.Element, B.Element, C) -> (O1.Element, O2.Element)
+        ) {
+            var o1 = o1, o2 = o2
+            if mode == .sync {
+                zip(zip(o1.indices, o2.indices), zip(a, b)).forEach {
+                    let (o1v, o2v) = op($1.0, $1.1, c)
+                    o1[$0.0] = o1v
+                    o2[$0.1] = o2v
+                }
+            } else {
+                queue.async(group: group) {
+                    zip(zip(o1.indices, o2.indices), zip(a, b)).forEach {
+                        let (o1v, o2v) = op($1.0, $1.1, c)
+                        o1[$0.0] = o1v
+                        o2[$0.1] = o2v
+                    }
+                }
+            }
+        }
+
+        execute(a.buffer, b.buffer, c,
+                output1.mutableBuffer, output2.mutableBuffer, op)
     }
 }

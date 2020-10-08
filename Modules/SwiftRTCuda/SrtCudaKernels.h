@@ -17,9 +17,9 @@
 #define __SrtCudaKernels_h__
 
 // this is an umbrella header
-#include "asmdOps.h"
+#include "mathOps.h"
 #include "compareOps.h"
 #include "fillOps.h"
-#include "mathOps.h"
+#include "specializedOps.h"
 
 #endif // __SrtCudaKernels_h__

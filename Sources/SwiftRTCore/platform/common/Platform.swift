@@ -16,43 +16,71 @@
 import Foundation
 
 //==============================================================================
-/// Platform
+// Platform types
+#if canImport(SwiftRTCuda)
+public typealias Platform = CudaPlatform
+#else
+public typealias Platform = CpuPlatform
+#endif
+
+// global ambient properties used for expression evaluation
+public var log: Log = Log()
+@inlinable public var platform: Platform { Platform.local }
+@inlinable public var currentDevice: Platform.Device { platform.currentDevice }
+@inlinable public var currentQueue: Platform.Device.Queue { platform.currentQueue }
+
+//==============================================================================
+/// ComputePlatform
 /// a platform represents a collection of installed devices on a
 /// compute node, such as (cpu, cuda, tpu, ...)
-public protocol Platform: class, Logging {
+public protocol ComputePlatform: class, Logging {
     // types
     associatedtype Device: ComputeDevice
+    associatedtype Storage: StorageBuffer
 
-    /// the number of async cpu queues to create
-    static var defaultCpuQueueCount: Int { get }
-    /// the number of queues per accelerator device to create
-    static var defaultAcceleratorQueueCount: Int { get }
+    //--------------------------------------------------------------------------
+    // shared state
+    /// returns an id to a discrete memory device to support unit tests
+    static var discreteMemoryDeviceId: Int { get }
+    /// identifies the main thread
+    static var mainThread: pthread_t { get }
+    /// the time that the platform was first accessed
+    static var startTime: Date { get }
+    /// queue used to synchronize data interchange with the application thread
+    static var syncQueue: Device.Queue { get }
+
+    //--------------------------------------------------------------------------
+    // instance state
     /// a collection of available compute devices
     var devices: [Device] { get }
-    /// returns an id to a discrete memory device to support unit tests
-    var discreteMemoryDeviceId: Int { get }
     /// name used for logging
     var name: String { get }
     /// the current device queue to direct work
     var queueStack: [Device.Queue] { get set }
-    /// queue used to synchronize data interchange with the application thread
-    var appThreadQueue: Device.Queue { get }
+
+    //--------------------------------------------------------------------------
+    /// used by random number generators
+    static var lastRandomSeed: RandomSeed { get set }
+    /// counter for unique buffer ids
+    static var objectId: AtomicCounter { get }
+    /// a platform instance unique id for queue events
+    static var queueId: AtomicCounter { get }
+    /// a platform instance unique id for queue events
+    static var eventId: AtomicCounter { get }
 }
 
-public extension Platform {
-    /// the currently active queue that platform functions will use
-    /// - Returns: the current device queue
-    @inlinable @_transparent
-    var currentDevice: Device {
-        devices[queueStack.last!.deviceIndex]
+public extension ComputePlatform {
+    /// `true` if the caller is the main thread
+    @inlinable var isMainThread: Bool { pthread_self() == Self.mainThread }
+    
+    /// the currently active queue for expression evaluation
+    @inlinable var currentQueue: Device.Queue {
+        isMainThread ? queueStack.last! : Self.syncQueue
     }
 
-    /// the currently active queue that platform functions will use
-    /// - Returns: the current device queue
-    @inlinable var currentQueue: Device.Queue {
-        assert(Thread.current == queueStack.last!.creatorThread,
-               "queues may not be shared across threads")
-        return queueStack.last!
+    /// the currently active device
+    @inlinable var currentDevice: Device {
+        isMainThread ? devices[queueStack.last!.deviceIndex] : devices[0]
     }
     
     /// selects the specified device queue for output
@@ -66,15 +94,15 @@ public extension Platform {
     /// selects the application thread data interchange queue within
     /// the scope of the body
     @inlinable func useAppThreadQueue() {
-        queueStack[queueStack.count - 1] = appThreadQueue
+        queueStack[queueStack.count - 1] = Self.syncQueue
     }
     
     /// selects the application thread data interchange queue within
     /// the scope of the body
     /// - Parameters:
     ///  - body: a closure where the device queue will be used
-    @inlinable func usingAppThreadQueue<R>(_ body: () -> R) -> R {
-        queueStack.append(appThreadQueue)
+    @inlinable func usingSyncQueue<R>(_ body: () -> R) -> R {
+        queueStack.append(Self.syncQueue)
         defer { _ = queueStack.popLast() }
         return body()
     }
@@ -110,9 +138,38 @@ public extension Platform {
         _ queueId: Int
     ) -> Device.Queue {
         let device = devices[deviceId % devices.count]
-        assert(device.queues.count > 0, "the number of available queues is 0")
-        return device.queues[queueId % device.queues.count]
+        if deviceId == 0 && device.queues.count == 0 {
+            return Self.syncQueue
+        } else {
+            assert(device.queues.count > 0, "the number of available queues is 0")
+            return device.queues[queueId % device.queues.count]
+        }
     }
+    
+    //--------------------------------------------------------------------------
+    /// randomSeed
+    /// - Note: Whenever obtained, the random seed is also updated so that
+    /// future stateless random TensorFlow op executions will result
+    /// in non-deterministic results.
+    @inlinable static var randomSeed: RandomSeed {
+        get {
+            let seed = lastRandomSeed
+            lastRandomSeed = (seed.0, seed.1 + 1)
+            return seed
+        }
+        set { lastRandomSeed = newValue }
+    }
+    
+    @inlinable static func createRandomNumberGenerator(
+        using seed: RandomSeed? = nil
+    ) -> AnyRandomNumberGenerator {
+        let randomSeed = seed ?? Platform.randomSeed
+        let generatorSeed = UInt64(msb: UInt32(bitPattern: randomSeed.op),
+                                   lsb: UInt32(bitPattern: randomSeed.graph))
+        return AnyRandomNumberGenerator(
+            PhiloxRandomNumberGenerator(uint64Seed: generatorSeed))
+    }
+
 }
 
 //==============================================================================
@@ -121,35 +178,49 @@ public extension Platform {
 /// useAppThreadQueue
 /// specifies the application thread queue to be used for operator execution
 @inlinable public func useAppThreadQueue() {
-    Context.local.platform.useAppThreadQueue()
+    platform.useAppThreadQueue()
 }
 
-/// useAppThreadQueue(body:
+/// usingSyncQueue(body:
 /// specifies the application thread queue to be used for operator execution
 /// withing the scope of the closure
-@inlinable public func usingAppThreadQueue<R>(_ body: () -> R) -> R {
-    Context.local.platform.usingAppThreadQueue(body)
+@inlinable public func usingSyncQueue<R>(_ body: () -> R) -> R {
+    platform.usingSyncQueue(body)
 }
 
 /// use(device:queue:
 /// specifies the device queue to use for operator execution
 @inlinable public func use(device: Int, queue: Int = 0) {
-    Context.local.platform.use(device: device, queue: queue)
+    platform.use(device: device, queue: queue)
 }
 
-/// use(device:queue:body:
+/// using(device:queue:body:
 /// specifies the device queue to use for operator execution
 /// withing the scope of the closure
 @inlinable public func using<R>(device: Int, queue: Int = 0, _ body: () -> R) -> R {
-    Context.local.platform.using(device: device, queue: queue, body)
+    platform.using(device: device, queue: queue, body)
 }
 
-/// use(queue:body:
+/// using(queue:body:
 /// specifies the queue on the current device to use for operator execution
 /// withing the scope of the closure
 @inlinable public func using<R>(queue: Int, _ body: () -> R) -> R {
-    Context.local.platform.using(queue: queue, body)
+    platform.using(queue: queue, body)
 }
+
+/// testEachDevice(body:
+/// executes `body` on each type of device for test coverage
+@inlinable public func testEachDevice(_ onlyId: Int, _ body: () -> Void) {
+    using(device: onlyId, body)
+}
+
+@inlinable public func testEachDevice(_ body: () -> Void) {
+    usingSyncQueue(body)
+    for i in 0..<platform.devices.count {
+        using(device: i, body)
+    }
+}
+
 
 //==============================================================================
 /// the type used for memory indexing on discrete devices
@@ -248,40 +319,10 @@ extension DeviceMemory {
 }
 
 //==============================================================================
-/// QueueEvent
-/// A queue event is a barrier synchronization object that is
-/// - created by a `DeviceQueue`
-/// - recorded on a queue to create a barrier
-/// - waited on by one or more threads for group synchronization
-public protocol QueueEvent: class, Logging {
-    /// the id of the event for diagnostics
-    var id: Int { get }
-    /// the last time the event was recorded
-    var recordedTime: Date? { get set }
-
-    /// measure elapsed time since another event
-    func elapsedTime(since other: QueueEvent) -> TimeInterval?
-    
-    /// signals that the event has occurred
+//
+public protocol QueueEvent: class {
     func signal()
-    
-    /// will block the caller until the timeout has elapsed if one
-    /// was specified during init, otherwise it will block forever
     func wait()
-}
-
-//==============================================================================
-public extension QueueEvent {
-    /// elapsedTime
-    /// computes the timeinterval between two queue event recorded times
-    /// - Parameter other: the other event used to compute the interval
-    /// - Returns: the elapsed interval. Will return `nil` if this event or
-    ///   the other have not been recorded.
-    @inlinable func elapsedTime(since other: QueueEvent) -> TimeInterval? {
-        guard let time = recordedTime,
-            let other = other.recordedTime else { return nil }
-        return time.timeIntervalSince(other)
-    }
 }
 
 //==============================================================================

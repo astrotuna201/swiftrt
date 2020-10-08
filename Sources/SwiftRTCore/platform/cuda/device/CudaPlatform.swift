@@ -13,30 +13,59 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+import Foundation
 import SwiftRTCuda
 
 //==============================================================================
 /// CudaPlatform
 /// The collection of compute resources available to the application
 /// on the machine where the process is being run.
-public class CudaPlatform: Platform {
+public class CudaPlatform: ComputePlatform {
+    // types
+    public typealias Storage = DiscreteStorage
+    
+        // shared
+    public static var cpuQueueCount = 0
+    public static let discreteMemoryDeviceId = 1
+    public static let eventId = AtomicCounter()
+    public static let local = CudaPlatform()
+    public static let mainThread = pthread_self()
+    public static let objectId = AtomicCounter()
+    public static let queueId = AtomicCounter()
+    public static let startTime = Date()
+    public static var lastRandomSeed: RandomSeed = generateRandomSeed()
+
+    public static var acceleratorQueueCount: Int = 2 {
+        didSet {
+            precondition(acceleratorQueueCount > 0, 
+                "there must be at least 1 accelerator queue")
+        }
+    }
+
+    //-------------------------------------
+    // for synchrnous execution and syncing with the app thread
+    public static let syncQueue =
+        CudaQueue(deviceIndex: 0, name: "appThread", 
+                  queueMode: .sync, useGpu: false)
+
     // properties
-    public static var defaultCpuQueueCount: Int = 1
-    public static var defaultAcceleratorQueueCount: Int = 2
-    public var discreteMemoryDeviceId: Int = 1
     public var devices: [CudaDevice]
     public let logInfo: LogInfo
     public let name: String
     public var queueStack: [CudaQueue]
-    public let appThreadQueue: CudaQueue
+
+    //-------------------------------------
+    // HACK for AD
+    /// a storage buffer with a single zero value which is shared
+    /// every time Element.zero is obtained by AD.
+    // used to minimize AD overhead. AD needs to fix this problem.
+    public static let zeroStorage: Storage = {
+        Storage(storedElement: Int64(0), name: "Zero")
+    }()
 
     //--------------------------------------------------------------------------
     // initializer
     @inlinable public init() {
-        name = "\(Self.self)"
-        logInfo = LogInfo(logWriter: Context.log, logLevel: .error,
-                          namePath: name, nestingLevel: 0)
-                          
         //----------------------------
         // CudaDevice is overloaded to avoid using Swift existentials
         // to support both cpu and gpu operations.
@@ -44,16 +73,10 @@ public class CudaPlatform: Platform {
         let cpuDevice = CudaDevice(index: 0)
         devices = [cpuDevice]
 
-        appThreadQueue = CudaQueue(deviceIndex: 0,
-                              name: "appThread",
-                              queueMode: .sync,
-                              useGpu: false)
-
-
         // if the cpu queue count is 0 then at least add in
         // the appThreadQueue so there is something to work with
         if devices[0].queues.count == 0 {
-            devices[0].queues.append(appThreadQueue)
+            devices[0].queues.append(Self.syncQueue)
         }            
 
         //----------------------------
@@ -69,15 +92,19 @@ public class CudaPlatform: Platform {
 
         //----------------------------
         // select first gpu queue 0 as default
+        name = "\(Self.self)"
+        logInfo = LogInfo(logWriter: log, logLevel: .error,
+                          namePath: name, nestingLevel: 0)
+                          
         if gpuDeviceCount > 0 {
             queueStack = [devices[1].queues[0]]
         } else {
+            queueStack = [Self.syncQueue]
             writeLog("There are no '\(self.name)' devices installed",
                      level: .warning)
-            queueStack = [appThreadQueue]
         }
 
-        diagnostic("\(deviceString) default: \(queueStack[0].name)",
+        diagnostic(.device, "default: \(queueStack[0].name)",
                     categories: .device)
     }
 }
@@ -88,16 +115,16 @@ public class CudaPlatform: Platform {
 /// is logged and the fallback body is executed.
 @inlinable public func cpuFallback(
     _ status: cudaError_t,
-    _ body: (PlatformType.Device.Queue) -> Void
+    _ body: (Platform.Device.Queue) -> Void
 ) {
     if status == cudaErrorNotSupported {
-        let name = Context.currentQueue.deviceName
+        let name = currentQueue.deviceName
         using(device: 0) {
-            Context.currentQueue.diagnostic(
-                "\(fallbackString) unsupported function on \(name) " +
-                "delegated to \(Context.currentQueue.name)",
+            currentQueue.diagnostic(.fallback,
+                "unsupported function on \(name) " +
+                "delegated to \(currentQueue.name)",
                  categories: .fallback) 
-            body(Context.currentQueue)
+            body(currentQueue)
         }
     } else {
         cudaCheck(status)
@@ -119,7 +146,7 @@ public class CudaPlatform: Platform {
         let location = "CUDA error in \(file) at \(function):\(line)"
         let message = String(utf8String: cudaGetErrorString(status))!
         cudaDeviceReset()
-        Context.currentQueue.writeLog("\(message) at \(location)")
+        currentQueue.writeLog("\(message) at \(location)")
         fatalError("unrecoverable error")
     }
 #endif
@@ -137,7 +164,7 @@ public class CudaPlatform: Platform {
         let location = "CUDA error in \(file) at \(function):\(line)"
         let message = String(utf8String: cudaGetErrorString(status))!
         cudaDeviceReset()
-        Context.currentQueue.writeLog("\(message) at \(location)")
+        currentQueue.writeLog("\(message) at \(location)")
         fatalError("unrecoverable error")
     }
 }
@@ -155,7 +182,7 @@ public class CudaPlatform: Platform {
         let message = String(utf8String: cudnnGetErrorString(status))!
         print(message)
         cudaDeviceReset()
-        Context.currentQueue.writeLog("\(message) at \(location)")
+        currentQueue.writeLog("\(message) at \(location)")
         fatalError("unrecoverable error")
     }
 }
@@ -172,7 +199,7 @@ public class CudaPlatform: Platform {
         let location = "CUBLAS error in \(file) at \(function):\(line)"
         let message = String(utf8String: cublasGetErrorString(status))!
         cudaDeviceReset()
-        Context.currentQueue.writeLog("\(message) at \(location)")
+        currentQueue.writeLog("\(message) at \(location)")
         fatalError("unrecoverable error")
     }
 }
@@ -236,6 +263,13 @@ extension curandStatus_t : Hashable {}
 }
 
 //==============================================================================
+extension cudaDataType {
+    @inlinable public init(_ type: srtDataType) {
+        self = unsafeBitCast(type, to: Self.self)
+    }
+}
+
+//==============================================================================
 // leading dimension for matmul
 public extension Tensor {
     @inlinable var leadingDimension: Int {
@@ -247,6 +281,7 @@ public extension Tensor {
         case .colTiled32: return 32 * shape[i]
         case .colTiledTC32x8: return 32 * n.roundUp(toMultipleOf: 8)
         case .colTiledTC32x32: return 32 * n.roundUp(toMultipleOf: 32)
+        default: fatalError("not implemented yet")
         }
     }
 }
@@ -417,7 +452,7 @@ public final class FilterDescriptor {
         // initialize
         cudaCheck(cudnnSetFilterNdDescriptor(
             desc,
-            E.type.cudnn,
+            E.cudnn,
             CUDNN_TENSOR_NHWC,
             Int32(tensor.count),
             tensor.shape.asInt32))
@@ -471,7 +506,7 @@ public final class TensorDescriptor {
     @inlinable public init<S: TensorShape>(
         shape: S,
         strides: S,
-        scalarType: StorageElementType
+        scalarType: cudnnDataType_t
     ) {
         assert(shape.count >= 4 && shape.count <= CUDNN_DIM_MAX,
             "cudnn tensor rank must be between 4 and \(CUDNN_DIM_MAX)")
@@ -483,7 +518,7 @@ public final class TensorDescriptor {
         // initialize
         cudaCheck(cudnnSetTensorNdDescriptor(
             self.desc,
-            scalarType.cudnn,
+            scalarType,
             Int32(shape.count),
             shape.asInt32,
             strides.asInt32))
@@ -501,7 +536,7 @@ public final class TensorDescriptor {
     //--------------------------------------------------------------------------
     // getInfo
     @inlinable public func getInfo()
-    -> (extent: [Int], strides: [Int], StorageElementType)
+    -> (extent: [Int], strides: [Int], type: cudnnDataType_t)
     {
         let reqDims = Int(CUDNN_DIM_MAX)
         var dims = [Int32](repeating: 0, count: reqDims)
@@ -520,7 +555,7 @@ public final class TensorDescriptor {
 
         return (dims[0..<Int(numDims)].map(Int.init),
                 strides[0..<Int(numDims)].map(Int.init),
-                StorageElementType(type))
+                type)
     }
 }
 
@@ -534,7 +569,7 @@ extension Tensor {
         assert(newShape == nil || newShape!.count == shape.count)
         return TensorDescriptor(shape: newShape ?? shape,
                                 strides: strides,
-                                scalarType: TensorElement.type)
+                                scalarType: TensorElement.cudnn)
     }
 }
 
@@ -549,7 +584,7 @@ public final class ReductionTensorDescriptor {
     @inlinable public init(
         op: ReductionOp,
         nan: NanPropagation,
-        scalarType: StorageElementType
+        scalarType: srtDataType
     ) {
         // create the descriptor
         var temp: cudnnReduceTensorDescriptor_t?
@@ -564,7 +599,7 @@ public final class ReductionTensorDescriptor {
         cudaCheck(cudnnSetReduceTensorDescriptor(
             desc,
             op.cudnn,
-            scalarType == .real64F ? CUDNN_DATA_DOUBLE : CUDNN_DATA_FLOAT,
+            scalarType == real64F ? CUDNN_DATA_DOUBLE : CUDNN_DATA_FLOAT,
             nan.cudnn,
             indicesAction,
             CUDNN_32BIT_INDICES

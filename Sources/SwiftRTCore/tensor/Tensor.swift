@@ -34,43 +34,44 @@ where Shape: TensorShape, TensorElement: StorageElement
     public typealias Element = TensorElement.Value
     
     /// the number of element
-    public let count: Int
+    @noDerivative public let count: Int
     /// `true` if the view will be shared by by multiple writers
-    public var isShared: Bool
+    @noDerivative public var isShared: Bool
     /// element storage order in memory
-    @noDerivative public let order: Order
+    @noDerivative public let order: Order 
     /// a collection that maps logical coordinates to storage elements
     /// via the current storage order
-    public var logicalElements: LogicalElements<Shape, TensorElement>
+    @noDerivative public var logicalElements: LogicalElements<Shape, TensorElement>
     /// the strides to traverse `shape` in logical coordinates
-    public let logicalStrides: Shape
+    @noDerivative public let logicalStrides: Shape
     /// the dimensions of the element space
     @noDerivative public let shape: Shape
     /// the element storage buffer.
-    public var storage: StorageBufferType
+    @noDerivative public var storage: Platform.Storage
     /// the logical storage buffer base index where this tensor's elements begin
-    public let storageBase: Int
+    @noDerivative public let storageBase: Int
     /// The distance to the next element along each dimension
-    public let strides: Shape
+    @noDerivative public let strides: Shape
     /// the number of storage elements spanned by this tensor
-    public let spanCount: Int
+    @noDerivative public let spanCount: Int
 
     //--------------------------------------------------------------------------
     // functional properties
     /// the unique storage id
     @inlinable public var id: Int { storage.id }
+    
     /// the name of the collection
     @inlinable public var name: String {
         get { storage.name }
         set { storage.name = newValue }
     }
+
     /// `true` if the tensor elements are densely packed
     @inlinable public var isContiguous: Bool { spanCount == count }
-    
-    /// `true` if the tensor contains a single stored element. This is
-    /// common for scalar tensors that are repeated.
-    @inlinable public var isSingleElement: Bool { spanCount == 1 }
-    
+
+    /// `true` if the tensor value is zero
+    @inlinable public var isZero: Bool { storage.isZero }
+
     //--------------------------------------------------------------------------
     /// init(
     /// Used to initialize an element collection subview
@@ -78,7 +79,7 @@ where Shape: TensorShape, TensorElement: StorageElement
         shape: Shape,
         strides: Shape,
         count: Int,
-        storage: StorageBufferType,
+        storage: Platform.Storage,
         storageBase: Int,
         spanCount: Int,
         order: Order,
@@ -91,6 +92,10 @@ where Shape: TensorShape, TensorElement: StorageElement
         assert(TensorElement.storedIndex(storageBase + spanCount - 1) <
                 storage.countOf(type: TensorElement.Stored.self),
                "tensor storage range is out of bounds")
+
+        // verify storage order is valid for rank
+        assert((order != .NHWC || Shape.rank == 4) &&
+               (order != .NDHWC || Shape.rank == 5))
         self.shape = shape
         self.strides = strides
         self.count = count
@@ -99,7 +104,7 @@ where Shape: TensorShape, TensorElement: StorageElement
         self.spanCount = spanCount
         self.isShared = shared
         self.order = order
-        logicalStrides = shape.strides(for: order)
+        logicalStrides = order == .row ? strides : shape.strides(for: .row)
         logicalElements = LogicalElements(count,
                                           shape,
                                           strides,
@@ -118,6 +123,10 @@ where Shape: TensorShape, TensorElement: StorageElement
         order: Order,
         name: String
     ) {
+        // verify storage order is valid for rank
+        assert((order != .NHWC || Shape.rank == 4) &&
+               (order != .NDHWC || Shape.rank == 5))
+
         self.shape = shape
         self.strides = Shape.zero
         self.storageBase = 0
@@ -126,8 +135,31 @@ where Shape: TensorShape, TensorElement: StorageElement
         self.spanCount = 1
         self.order = order
         let stored = TensorElement.stored(value: value)
-        self.storage = StorageBufferType(storedElement: stored, name: name)
-        logicalStrides = shape.strides(for: order)
+        self.storage = Platform.Storage(storedElement: stored, name: name)
+        logicalStrides = order == .row ? strides : shape.strides(for: .row)
+        logicalElements = LogicalElements(count,
+                                          shape,
+                                          strides,
+                                          storage,
+                                          storageBase,
+                                          order,
+                                          spanCount)
+    }
+
+    //--------------------------------------------------------------------------
+    /// init
+    /// Used to represent a single zero value
+    // Primarily used to minimize AD zero materialization problem
+    @inlinable public init() {
+        self.shape = Shape.one
+        self.strides = Shape.one
+        self.storageBase = 0
+        self.isShared = false
+        self.count = 1
+        self.spanCount = 1
+        self.order = .row
+        self.storage = Platform.zeroStorage
+        logicalStrides = Shape.one
         logicalElements = LogicalElements(count,
                                           shape,
                                           strides,
@@ -159,7 +191,16 @@ public enum Order: Int, Codable {
     /// of next group of 32-columns. For example, if the matrix has 33 columns
     /// and 2 rows, then the leading dimension must be at least (32) * 2 = 64.
     case colTiled32
-    
+
+    //--------------------------------------------------------------------------
+    /// Data is ordered as batch N of (rows H, columns W, channels C)
+    /// This order is only valid for 4D tensors. 
+    case NHWC
+
+    /// Data is ordered as batch N of (depths D, rows H, columns W, channels C)
+    /// This order is only valid for 5D tensors. 
+    case NDHWC
+
     //--------------------------------------------------------------------------
     // NVIDIA native tensor core formats 
 
@@ -195,11 +236,7 @@ public enum Order: Int, Codable {
     public static var defaultOrder: Order = Order.row
 }
 
-@usableFromInline let _messageLayoutsMustMatch = "input Order must match"
-
-@usableFromInline func layoutsMatch(_ layouts: Order...) -> Bool {
-    layouts.first(where: { $0 != layouts[0] }) == nil
-}
+@usableFromInline let _messageOrdersMustMatch = "storage orders must match"
 
 //==============================================================================
 /// DifferentiableTensor
@@ -214,27 +251,27 @@ public protocol TensorProtocol: Logging {
 }
 
 public protocol DifferentiableTensor: TensorProtocol & Differentiable
-where Self == TangentVector, TensorElement.Value: DifferentiableElement {}
+where Self == TangentVector, TensorElement.Value: DifferentiableNumeric {}
 
-/// DifferentiableElement
-public protocol DifferentiableElement:
+/// DifferentiableNumeric
+public protocol DifferentiableNumeric:
     Differentiable & Numeric where Self == TangentVector {}
 
-extension Float: DifferentiableElement {}
-extension Double: DifferentiableElement {}
+extension Float: DifferentiableNumeric {}
+extension Double: DifferentiableNumeric {}
 
-extension Complex: DifferentiableElement
+extension Complex: DifferentiableNumeric
 where RealType: Differentiable, RealType.TangentVector == RealType {}
 
 // Differentiable conformance
 extension Tensor: Differentiable & DifferentiableTensor
-    where Element: DifferentiableElement
+    where Element: DifferentiableNumeric
 {
     public typealias TangentVector = Self
 }
 
 extension Tensor: AdditiveArithmetic where Element: Numeric {
-    @inlinable public static var zero: Self { Tensor(0, name: "Zero") }
+    @inlinable public static var zero: Self { Tensor() }
     @inlinable public static var one: Self { Tensor(1, name: "One") }
 }
 
@@ -252,12 +289,12 @@ extension Tensor: Codable where Element: Codable {
         try container.encode(shape, forKey: .shape)
         try container.encode(order, forKey: .order)
         var dataContainer = container.nestedUnkeyedContainer(forKey: .data)
-        if isBufferIterable {
+        if isContiguous {
             try self.buffer.forEach {
                 try dataContainer.encode($0)
             }
         } else {
-            try self.forEach {
+            try self.elements.forEach {
                 try dataContainer.encode($0)
             }
         }
@@ -332,12 +369,23 @@ public struct ElementIndex<Shape>: Comparable, Codable
 }
 
 //==============================================================================
+/// inplace
+/// prepares a tensor to be modified inplace without causing mutation.
+/// Primarily used by tensor subscript set functions
+@inlinable public func inplace<S,E>(
+    _ tensor: inout Tensor<S,E>,
+    _ body: (inout Tensor<S,E>) -> Void
+) {
+    tensor.prepareForWrite(using: currentQueue)
+    let sharing = tensor.isShared
+    tensor.isShared = true
+    body(&tensor)
+    tensor.isShared = sharing
+}
+
+//==============================================================================
 // Tensor collection and sub view extensions
 public extension Tensor {
-    @inlinable var isBufferIterable: Bool {
-        isSingleElement || isContiguous
-    }
-    
     //--------------------------------------------------------------------------
     // sequential buffer element iterators
     @inlinable var buffer: BufferElements<Shape,TensorElement> {
@@ -394,14 +442,14 @@ public extension Tensor {
     // elemment subscript
     @inlinable subscript(i: Index) -> Element {
         get {
-            usingAppThreadQueue {
+            usingSyncQueue {
                 logicalElements.prepareForRead()
                 return logicalElements[i]
             }
         }
         set {
-            usingAppThreadQueue {
-                prepareForWrite(using: Context.currentQueue)
+            usingSyncQueue {
+                prepareForWrite(using: currentQueue)
                 logicalElements.prepareForReadWrite()
                 logicalElements[i] = newValue
             }
@@ -410,16 +458,32 @@ public extension Tensor {
 
     //--------------------------------------------------------------------------
     // sub view subscript
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable subscript(lower: Shape, upper: Shape) -> Self {
         get { createView(lower, upper, isShared) }
         set {
-            prepareForWrite(using: Context.currentQueue)
+            prepareForWrite(using: currentQueue)
             var view = createView(lower, upper, true)
             copy(from: newValue, to: &view)
         }
     }
     
+    //--------------------------------------------------------------------------
+    // conditional assignment subscript
+    @inlinable subscript(condition: Tensor<Shape, Bool>) -> Self {
+        get {
+            // TODO: extract elements based on condition
+            fatalError("not implemented")
+        }
+
+        set {
+            // inplace write
+            inplace(&self) {
+                currentQueue.replace($0, newValue, condition, &$0)
+            }
+        }
+    }
+
     //--------------------------------------------------------------------------
     // creates a tensor subview
     @inlinable func createView(
@@ -431,16 +495,33 @@ public extension Tensor {
         let count = shape.elementCount()
         let spanCount = strides.areSequential(for: shape) ? count :
                 shape.spanCount(stridedBy: strides)
+        let base = storageBase + lower.index(stridedBy: strides)
 
         return Tensor(
             shape: shape,
             strides: strides,
             count: count,
             storage: storage,
-            storageBase: storageBase + lower.index(stridedBy: strides),
+            storageBase: base,
             spanCount: spanCount,
             order: order,
             shared: share)
+    }
+
+    //--------------------------------------------------------------------------
+    /// shared
+    /// creates a shareable instance intended for multi-threaded writes
+    /// - Parameters:
+    ///  - queue: a queue to use for copying in case the storage is not unique
+    @inlinable mutating func shared(
+        using queue: Platform.Device.Queue
+    ) -> Self {
+        // this ensures that the storage is unique before
+        // disabling copy on write by setting `isShared` to `true`
+        prepareForWrite(using: queue)
+        var sharedSelf = self
+        sharedSelf.isShared = true
+        return sharedSelf
     }
 
     //--------------------------------------------------------------------------
@@ -450,8 +531,10 @@ public extension Tensor {
     /// It also expands repeated tensors to a full dense storage
     /// representation for write, which most often happens via element
     /// subscripting.
-    @inlinable mutating func prepareForWrite(using queue: PlatformType.Device.Queue) {
-        // if repeated then expand to full dense tensor
+    @inlinable mutating func prepareForWrite(
+        using queue: Platform.Device.Queue
+    ) {
+        // if writing to repeated data, then expand to full dense tensor
         if spanCount < count {
             var expanded = Tensor(like: self)
 
@@ -466,11 +549,10 @@ public extension Tensor {
 
         } else if !(isKnownUniquelyReferenced(&storage) || isShared) {
             // if not uniquely held then copy before creating the shared view
-            diagnostic(.mutation, "\(storage.name)(\(storage.id)) " +
-                        "\(Element.self)[\(count)]",
+            diagnostic(.mutation, "\(storage.name) \(Element.self)[\(count)]",
                        categories: [.dataCopy, .dataMutation])
             
-            storage = StorageBufferType(type: Element.self, copying: storage,
+            storage = Platform.Storage(type: Element.self, copying: storage,
                                         using: queue)
             logicalElements = LogicalElements(tensor: self)
         }
@@ -479,15 +561,15 @@ public extension Tensor {
     //--------------------------------------------------------------------------
     /// - Returns: the collection elements as a 1D Swift array
     @inlinable var flatArray: [Element] {
-        usingAppThreadQueue {
-            isBufferIterable ? [Element](buffer) : [Element](elements)
+        usingSyncQueue {
+            return isContiguous ? [Element](buffer) : [Element](elements)
         }
     }
 }
 
 //==============================================================================
 /// Derivative registration
-extension Tensor where TensorElement.Value: DifferentiableElement {
+extension Tensor where TensorElement.Value: DifferentiableNumeric {
     // https://github.com/apple/swift/blob/37b507b31c77ef969151f385cd1902dd44fb3b7f/stdlib/public/core/Array.swift#L2091
     
     @derivative(of: subscript)
@@ -512,7 +594,7 @@ public extension Tensor {
     /// `Elements` are accessed by the application using `Collection`
     /// enumeration via `indices` or integer subscripting.
     @inlinable func read() -> UnsafeBufferPointer<TensorElement.Stored> {
-        read(using: Context.appThreadQueue)
+        read(using: Platform.syncQueue)
     }
     
     //--------------------------------------------------------------------------
@@ -524,7 +606,7 @@ public extension Tensor {
     ///
     /// - Parameter queue: the device queue to use for synchronization
     @inlinable func read(
-        using queue: DeviceQueue
+        using queue: Platform.Device.Queue
     ) -> UnsafeBufferPointer<TensorElement.Stored> {
         let (i, storedCount) = TensorElement
                 .storedRange(start: storageBase, count: spanCount)
@@ -541,7 +623,9 @@ public extension Tensor {
     /// head of the queue.
     ///
     /// - Parameter queue: the device queue to use for synchronization
-    @inlinable func deviceRead(using queue: DeviceQueue) -> UnsafeRawPointer {
+    @inlinable func deviceRead(
+        using queue: Platform.Device.Queue
+    ) -> UnsafeRawPointer {
         UnsafeRawPointer(read(using: queue).baseAddress!)
     }
     
@@ -553,7 +637,7 @@ public extension Tensor {
     /// enumeration via `indices` or subscripting.
     @inlinable mutating func readWrite()
         -> UnsafeMutableBufferPointer<TensorElement.Stored> {
-        readWrite(using: Context.appThreadQueue)
+        readWrite(using: Platform.syncQueue)
     }
     
     //--------------------------------------------------------------------------
@@ -564,7 +648,7 @@ public extension Tensor {
     /// head of the queue.
     ///
     /// - Parameter queue: the device queue to use for synchronization
-    @inlinable mutating func readWrite(using queue: PlatformType.Device.Queue)
+    @inlinable mutating func readWrite(using queue: Platform.Device.Queue)
     -> UnsafeMutableBufferPointer<TensorElement.Stored>
     {
         prepareForWrite(using: queue)
@@ -585,7 +669,7 @@ public extension Tensor {
     ///
     /// - Parameter queue: the device queue to use for synchronization
     @inlinable mutating func deviceReadWrite(
-        using queue: PlatformType.Device.Queue
+        using queue: Platform.Device.Queue
     ) -> UnsafeMutableRawPointer {
         UnsafeMutableRawPointer(readWrite(using: queue).baseAddress!)
     }
@@ -597,23 +681,23 @@ public extension Tensor {
     /// first
     /// - Returns: the first element in the tensor
     @inlinable var first: Element {
-        TensorElement.getValue(from: read(), at: storageBase)
+        TensorElement.getValue(from: read(), at: 0)
     }
 
     /// element
     /// can get and set the value of a single element tensor.
     /// - Returns: the only element in the tensor
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable var element: Element {
         get {
             assert(count == 1, "the `element` property expects " +
                 "the tensor to have a single Element. Use `first` for sets")
-            return TensorElement.getValue(from: read(), at: storageBase)
+            return TensorElement.getValue(from: read(), at: 0)
         }
         set {
             assert(count == 1, "the `element` property expects " +
                 "the tensor to have a single Element")
-            TensorElement.set(value: newValue, in: readWrite(), at: storageBase)
+            TensorElement.set(value: newValue, in: readWrite(), at: 0)
         }
     }
 
@@ -621,7 +705,7 @@ public extension Tensor {
     @inlinable func vjpElement() -> (
       value: Element,
       pullback: (Element) -> Self
-    ) where Element: DifferentiableElement {
+    ) where Element: DifferentiableNumeric {
       (element, { v in
         var result = zeros(like: self)
         result.element = v

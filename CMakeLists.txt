@@ -1,14 +1,8 @@
 cmake_minimum_required(VERSION 3.5)
-
-# This must come before the `project` declaration
-# we specify less than clang 10 because nvcc doesn't support v10 yet
-# Hmm declaring this AND setting the Vscode kit to clang 9 causes an
-# infinite loop in the cmake generator.
-#
-#set(CMAKE_C_COMPILER "/usr/lib/llvm-9/bin/clang")
-#set(CMAKE_CXX_COMPILER "/usr/lib/llvm-9/bin/clang")
-
 project(swiftrt)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 #####################
 # output directories
@@ -25,31 +19,36 @@ file(GLOB_RECURSE MODULES_HEADERS
 
 #####################
 # Cuda
-cmake_policy(SET CMP0074 NEW)
-find_package(CUDA REQUIRED)
+if ($ENV{SWIFTRT_PLATFORM} MATCHES "cuda")
+        cmake_policy(SET CMP0074 NEW)
+        find_package(CUDA REQUIRED)
 
-#####################
-# SwiftRTCuda static library
-set(SWIFTRT_CUDA_LIB_NAME SwiftRTCuda)
-set(SWIFTRT_CUDA_DIR ${MODULES_DIR}/${SWIFTRT_CUDA_LIB_NAME})
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
-        -Wno-deprecated-gpu-targets
-        -gencode arch=compute_75,code=sm_75
-        --compiler-options -fPIC)
+        #####################
+        # SwiftRTCuda static library
+        set(SWIFTRT_CUDA_LIB_NAME SwiftRTCuda)
+        set(SWIFTRT_CUDA_DIR ${MODULES_DIR}/${SWIFTRT_CUDA_LIB_NAME})
+        set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS}
+                -allow-unsupported-compiler
+                --std c++17
+                --expt-relaxed-constexpr
+                -Wno-deprecated-gpu-targets
+                -gencode arch=compute_75,code=sm_75
+                --compiler-options -fPIC)
 
-if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
-    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -DDEBUG -g -G)
-else()
-    set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -O3 -Xptxas -O3)
+        if (${CMAKE_BUILD_TYPE} MATCHES "Debug")
+        set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -DDEBUG -g -G)
+        else()
+        set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} -O3 -Xptxas -O3)
+        endif()
+
+        file(GLOB_RECURSE SWIFTRT_CUDA_SOURCES
+                ${SWIFTRT_CUDA_DIR}/*.cu
+                ${SWIFTRT_CUDA_DIR}/*.c
+                ${SWIFTRT_CUDA_DIR}/*.cpp
+                ${SWIFTRT_CUDA_DIR}/*.h)
+
+        cuda_add_library(${SWIFTRT_CUDA_LIB_NAME} ${SWIFTRT_CUDA_SOURCES})
 endif()
-
-file(GLOB_RECURSE SWIFTRT_CUDA_SOURCES
-        ${SWIFTRT_CUDA_DIR}/*.cu
-        ${SWIFTRT_CUDA_DIR}/*.c
-        ${SWIFTRT_CUDA_DIR}/*.cpp
-        ${SWIFTRT_CUDA_DIR}/*.h)
-
-cuda_add_library(${SWIFTRT_CUDA_LIB_NAME} ${SWIFTRT_CUDA_SOURCES})
 
 #####################
 # swift
@@ -72,13 +71,32 @@ set(SWIFT_CONFIG_FLAGS
         # -Xswiftc -j12
         -Xswiftc -I/usr/local/include
         -Xswiftc -L/usr/local/lib
-        -Xswiftc -I${MODULES_DIR}
-        -Xswiftc -I${SWIFTRT_CUDA_DIR}
-        -Xlinker -l${SWIFTRT_CUDA_LIB_NAME}
         -Xswiftc -L${CMAKE_BINARY_DIR}
-        -Xswiftc -I${CUDA_INCLUDE_DIRS}
-        -Xlinker -L${CUDA_TOOLKIT_ROOT_DIR}/lib64
         )
+
+if ($ENV{SWIFTRT_PLATFORM} MATCHES "cuda")
+        set(SWIFT_CONFIG_FLAGS ${SWIFT_CONFIG_FLAGS}
+                -Xswiftc -I${MODULES_DIR}
+                -Xswiftc -I${SWIFTRT_CUDA_DIR}
+                -Xlinker -l${SWIFTRT_CUDA_LIB_NAME}
+                -Xswiftc -I${CUDA_INCLUDE_DIRS}
+                -Xlinker -L${CUDA_TOOLKIT_ROOT_DIR}/lib64
+                )
+endif()
+
+# for maximum performance only after thorough testing
+#if (${CMAKE_BUILD_TYPE} MATCHES "Release")
+        set(SWIFT_CONFIG_FLAGS ${SWIFT_CONFIG_FLAGS} -Xswiftc -enforce-exclusivity=unchecked -Xswiftc -Ounchecked)
+#endif()
+ 
+# thread sanitizer
+#set(SWIFT_CONFIG_FLAGS ${SWIFT_CONFIG_FLAGS} -Xswiftc -sanitize=thread -Xswiftc -g)
+
+# address sanitizer
+#set(SWIFT_CONFIG_FLAGS ${SWIFT_CONFIG_FLAGS} -Xswiftc -sanitize=address -Xswiftc -g)
+
+# memory sanitizer
+#set(SWIFT_CONFIG_FLAGS ${SWIFT_CONFIG_FLAGS} -Xswiftc -sanitize=memory -Xswiftc -g)
 
 #####################
 # SwiftRT module
@@ -91,7 +109,9 @@ add_custom_target(${SWIFTRT_NAME}
         COMMAND ${SWIFT} build -c ${SWIFT_BUILD_TYPE} ${SWIFTRT_FLAGS}
         SOURCES ${SWIFTRT_SOURCES} ${MODULES_HEADERS})
 
-add_dependencies(${SWIFTRT_NAME} ${SWIFTRT_CUDA_LIB_NAME})
+if ($ENV{SWIFTRT_PLATFORM} MATCHES "cuda")
+        add_dependencies(${SWIFTRT_NAME} ${SWIFTRT_CUDA_LIB_NAME})
+endif()
 
 #####################
 # SwiftRTTests app
@@ -109,5 +129,7 @@ add_dependencies(${SWIFTRT_TESTS_NAME} ${SWIFTRT_NAME} ${SWIFTRT_CUDA_LIB_NAME})
 
 # whenever the custom cuda kernel libraries are build, delete the exe
 # to force swift build to relink
-add_custom_command(TARGET ${SWIFTRT_CUDA_LIB_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E remove ${TARGET_DIR}/SwiftRTPackageTests.xctest)
+if ($ENV{SWIFTRT_PLATFORM} MATCHES "cuda")
+        add_custom_command(TARGET ${SWIFTRT_CUDA_LIB_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E remove ${TARGET_DIR}/SwiftRTPackageTests.xctest)
+endif()

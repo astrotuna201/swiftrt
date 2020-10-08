@@ -37,6 +37,14 @@ class test_Vectorizing: XCTestCase {
         ("test_perfMaxAB", test_perfMaxAB),
     ]
     
+    override func setUpWithError() throws {
+//         log.level = .diagnostic
+    }
+
+    override func tearDownWithError() throws {
+        // log.level = .error
+    }
+
     //--------------------------------------------------------------------------
     func test_perfAplusBSequential() {
         #if !DEBUG
@@ -47,7 +55,7 @@ class test_Vectorizing: XCTestCase {
         let b = ones((1024, 1024))
         var count: DType = 0
 
-        // 0.0205
+        // 0.0135
         self.measure {
             for _ in 0..<10 {
                 count += (a + b).first
@@ -64,7 +72,7 @@ class test_Vectorizing: XCTestCase {
         let b = ones((1024, 1024))
         var count: DType = 0
         
-        // 0.0205
+        // 0.0135
         self.measure {
             for _ in 0..<10 {
                 count += (a - b).first
@@ -81,7 +89,7 @@ class test_Vectorizing: XCTestCase {
         let b = ones((1024, 1024))
         var count: DType = 0
         
-        // 0.0205
+        // 0.0135
         self.measure {
             for _ in 0..<10 {
                 count += (a * b).first
@@ -98,7 +106,7 @@ class test_Vectorizing: XCTestCase {
         let b = ones((1024, 1024))
         var count: DType = 0
         
-        // 0.0205
+        // 0.0135
         self.measure {
             for _ in 0..<10 {
                 count += (a / b).first

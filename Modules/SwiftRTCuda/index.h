@@ -16,8 +16,38 @@
 #if !defined(__index_h__)
 #define __index_h__
 
+#include <assert.h>
 #include <vector_types.h>
-#include "kernelHelpers.h"
+#include "commonCDefs.h"
+
+//==============================================================================
+// TensorDescriptor
+// C++ enhanced wrapper
+struct TensorDescriptor: srtTensorDescriptor {
+    inline bool isDense() const { return count == spanCount; }
+    inline bool isStrided() const { return !isDense(); }
+    inline bool isSingle() const { return spanCount == 1; }
+};
+
+static_assert(sizeof(TensorDescriptor) == sizeof(srtTensorDescriptor),
+    "TensorDescriptor is a c++ wrapper and cannot contain additional members");
+
+
+// statically cast types from C interface to c++ type
+#define Cast2TensorDescriptorsA(pa, po) \
+const TensorDescriptor& aDesc = static_cast<const TensorDescriptor&>(*pa); \
+const TensorDescriptor& oDesc = static_cast<const TensorDescriptor&>(*po); \
+
+#define Cast2TensorDescriptorsAB(pa, pb, po) \
+const TensorDescriptor& aDesc = static_cast<const TensorDescriptor&>(*pa); \
+const TensorDescriptor& bDesc = static_cast<const TensorDescriptor&>(*pb); \
+const TensorDescriptor& oDesc = static_cast<const TensorDescriptor&>(*po); \
+
+#define Cast2TensorDescriptorsABC(pa, pb, pc, po) \
+const TensorDescriptor& aDesc = static_cast<const TensorDescriptor&>(*pa); \
+const TensorDescriptor& bDesc = static_cast<const TensorDescriptor&>(*pb); \
+const TensorDescriptor& cDesc = static_cast<const TensorDescriptor&>(*pc); \
+const TensorDescriptor& oDesc = static_cast<const TensorDescriptor&>(*po); \
 
 //==============================================================================
 /// Logical
@@ -56,8 +86,10 @@ struct Logical {
 //==============================================================================
 /// Single
 /// index used for single element value parameters 
-template<int Rank>
 struct Single {
+    static const int Rank = 1;
+    typedef Logical<1> Logical;
+
     // initializer
     __host__ Single(const TensorDescriptor& tensor) { }
 
@@ -67,27 +99,35 @@ struct Single {
     /// - Parameters:
     ///  - position: the logical position to test
     /// - Returns: `true` if the position is within the shape
-    __device__ __forceinline__ bool isInBounds(const Logical<Rank>& position) const {
+    __device__ __forceinline__ bool isInBounds(const Logical& position) const {
         return position[0] == 0;
     }
 
     /// linear
     /// - Returns: all positions map to the single value, so always returns 0 
     __device__ __forceinline__ 
-    uint32_t linear(const Logical<Rank>& position) const { return 0; }
+    uint32_t linear(const Logical& position) const { return 0; }
+
+    __device__ __forceinline__ 
+    uint32_t sequence(const Logical& position) const {
+        return position[0];
+    }
 };
 
 //==============================================================================
 /// Flat
 /// a flat dense 1D index
-template<int Rank>
 struct Flat {
+    // types
+    static const int Rank = 1;
+    typedef Logical<Rank> Logical;
+
+    // properties
     uint32_t count;
 
     //----------------------------------
     // initializer
     __host__ Flat(const TensorDescriptor& tensor) {
-        static_assert(Rank == 1, "Rank must == 1 for Flat index");
         assert(tensor.count == tensor.spanCount);
         count = tensor.count;
     }
@@ -98,27 +138,41 @@ struct Flat {
     /// - Parameters:
     ///  - position: the logical position to test
     /// - Returns: `true` if the position is within the shape
-    __device__ __forceinline__ bool isInBounds(const Logical<Rank>& position) const {
+    __device__ __forceinline__ bool isInBounds(const Logical& position) const {
         return position[0] < count;
     }
 
     //----------------------------------
     __device__ __forceinline__ 
-    uint32_t linear(const Logical<Rank>& position) const {
+    uint32_t linear(const Logical& position) const {
+        return position[0];
+    }
+
+    //--------------------------------------------------------------------------
+    // the logical sequence position
+    __device__ __forceinline__ 
+    uint32_t sequence(const Logical& position) const {
         return position[0];
     }
 };
 
 //==============================================================================
 /// Strided
-template<int Rank>
+template<int _Rank>
 struct Strided {
+    // types
+    static const int Rank = _Rank;
+    typedef Logical<Rank> Logical;
+
+    // properties
+    uint32_t count;
     uint32_t shape[Rank];
     uint32_t strides[Rank];
 
-    //----------------------------------
+    //--------------------------------------------------------------------------
     // initializer
     __host__ Strided(const TensorDescriptor& tensor) {
+        count = tensor.count;
         for (int i = 0; i < Rank; ++i) {
             assert(tensor.shape[i] <= UINT32_MAX && tensor.strides[i] <= UINT32_MAX);
             shape[i] = uint32_t(tensor.shape[i]);
@@ -126,13 +180,14 @@ struct Strided {
         }
     }
 
+    //--------------------------------------------------------------------------
     /// isInBounds
     /// `true` if the given logical position is within the bounds of
     /// the indexed space
     /// - Parameters:
     ///  - position: the logical position to test
     /// - Returns: `true` if the position is within the shape
-    __device__ __forceinline__ bool isInBounds(const Logical<Rank>& position) const {
+    __device__ __forceinline__ bool isInBounds(const Logical& position) const {
         bool inBounds = position[0] < shape[0];
         #pragma unroll
         for (int i = 1; i < Rank; i++) {
@@ -141,13 +196,45 @@ struct Strided {
         return inBounds;
     }
 
-    //----------------------------------
+    //--------------------------------------------------------------------------
+    // the linear buffer position
     __device__ __forceinline__ 
-    uint32_t linear(const Logical<Rank>& position) const {
+    uint32_t linear(const Logical& position) const {
         uint32_t index = 0;
         #pragma unroll
         for (int i = 0; i < Rank; i++) {
             index += position[i] * strides[i];
+        }
+        return index;
+    }
+};
+
+//==============================================================================
+/// StridedSeq
+/// used to calculate strided indexes and sequence positions
+/// to support generators
+template<int R>
+struct StridedSeq: Strided<R> {
+    // properties
+    uint32_t logicalStrides[R];
+
+    //--------------------------------------------------------------------------
+    // initializer
+    __host__ StridedSeq(const TensorDescriptor& tensor) : Strided<R>(tensor) {
+        for (int i = 0; i < R; ++i) {
+            assert(tensor.shape[i] <= UINT32_MAX && tensor.strides[i] <= UINT32_MAX);
+            logicalStrides[i] = uint32_t(tensor.logicalStrides[i]);
+        }
+    }
+
+    //--------------------------------------------------------------------------
+    // the logical sequence position
+    __device__ __forceinline__  
+    uint32_t sequence(const typename Strided<R>::Logical& position) const {
+        uint32_t index = 0;
+        #pragma unroll
+        for (int i = 0; i < R; i++) {
+            index += position[i] * logicalStrides[i];
         }
         return index;
     }

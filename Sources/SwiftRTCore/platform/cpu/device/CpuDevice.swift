@@ -21,17 +21,27 @@ public final class CpuDevice: ComputeDevice {
     // properties
     public let index: Int
     public let memoryType: MemoryType
-    public let name: String
+    @inlinable public var name: String { "dev:\(index)" }
     public var queues: [CpuQueue]
 
-    @inlinable public init(index: Int, memoryType: MemoryType) {
+    @inlinable public init(
+        index: Int,
+        memoryType: MemoryType,
+        queueCount: Int
+    ) {
         self.index = index
-        self.name = "dev:\(index)"
         self.memoryType = memoryType
         self.queues = []
-        diagnostic(.device, "create \(name)  memory: \(memoryType)",
+        
+        // report
+        diagnostic(.device, "create \(name) memory: \(memoryType)",
                    categories: .device)
-        for i in 0..<Context.cpuQueueCount {
+        
+        diagnostic(.device,
+                   "create async queues: \(name)_q0 - \(name)_q\(queueCount-1)",
+                   categories: .queueAlloc)
+        
+        for i in 0..<queueCount {
             let queue = CpuQueue(
                 deviceIndex: index,
                 name: "\(name)_q\(i)",
@@ -71,8 +81,8 @@ public final class CpuDeviceMemory: DeviceMemory {
     }
 
     /// device where memory is located
-    @inlinable public var device: PlatformType.Device {
-        Context.devices[deviceIndex]
+    @inlinable public var device: Platform.Device {
+        platform.devices[deviceIndex]
     }
 
     @inlinable public init(

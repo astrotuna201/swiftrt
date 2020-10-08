@@ -16,6 +16,10 @@
 import Foundation
 import Numerics
 
+#if canImport(SwiftRTCuda)
+import SwiftRTCuda
+#endif
+
 //==============================================================================
 /// StorageElement
 /// tensor elements conform to `StorageElement`, which enables reading, writing,
@@ -26,17 +30,6 @@ public protocol StorageElement {
     associatedtype Stored
     associatedtype Value
     
-    //--------------------------------------------------------------------------
-    /// a unique element type identifier used for driver dispatch.
-    static var type: StorageElementType { get }
-
-    /// a pointer to a `Stored` zero used for driver support 
-    static var storedZeroPointer: UnsafeRawPointer { get }
-
-    /// a pointer to a `Stored` one used for driver support 
-    static var storedOnePointer: UnsafeRawPointer { get }
-
-    //--------------------------------------------------------------------------
     /// alignment
     /// the Value alignment with the Stored type for the given logical index
     /// For example `Int1` the alignment is 0 - 7, Int4 0 - 1
@@ -124,32 +117,32 @@ public protocol StorageElement {
         in buffer: UnsafeMutableBufferPointer<Stored>,
         at index: Int
     )
+
+#if canImport(SwiftRTCuda)
+    /// a pointer to a `Stored` zero used for driver support 
+    static var storedZeroPointer: UnsafeRawPointer { get }
+
+    /// a pointer to a `Stored` one used for driver support 
+    static var storedOnePointer: UnsafeRawPointer { get }
+
+    //--------------------------------------------------------------------------
+    /// element data type identifier used for driver library dispatch
+    static var type: srtDataType { get }
+    static var cudnn: cudnnDataType_t { get }
+    static var cublas: cublasDataType_t { get }
+#endif
 }
 
 //==============================================================================
-/// StorageElementType
-/// Used primarily for driver kernel dispatch and serialization
-public enum StorageElementType: Int, Codable {
-    // floating point
-    case real16F, complex16F
-    case real16BF, complex16BF
-    case real32F, complex32F
-    case real64F, complex64F
-
-    // integer
-    case real1U
-    case real4I, real4U, complex4I, complex4U
-    case real8I, real8U, complex8I, complex8U
-    case real16I, real16U, complex16I, complex16U
-    case real32I, real32U, complex32I, complex32U
-    case real64U, real64I, complex64I, complex64U
-
-    // vector types
-    case vector8Ux4
-    case vector32Fx4
-
-    // non numeric
-    case bool1, bool8
+// to support aggregate types where the Scalar case isn't implemented yet
+extension StorageElement {
+    @inlinable public static var storedZeroPointer: UnsafeRawPointer {
+        fatalError("not supported")
+    }
+    
+    @inlinable public static var storedOnePointer: UnsafeRawPointer {
+        fatalError("not supported")
+    }
 }
 
 //==============================================================================
@@ -292,7 +285,6 @@ public struct Bool1: PackedStorageElement {
     @inlinable public static var valueMask: Stored { 0x1 }
     @inlinable public static var valueMin: Value { false }
     @inlinable public static var valueMax: Value { true }
-    @inlinable public static var type: StorageElementType { .bool1 }
 
     //-------------------------------------
     // pointers
@@ -336,6 +328,7 @@ public struct Bool1: PackedStorageElement {
 }
 
 extension Tensor where TensorElement == Bool1 {
+    /// casting initializer
     @inlinable public init(_ other: Tensor<Shape, UInt1>) {
         shape = other.shape
         strides = other.strides
@@ -366,7 +359,6 @@ public struct UInt1: PackedStorageElement {
     @inlinable public static var valueMask: Stored { 0x1 }
     @inlinable public static var valueMin: Value { 0 }
     @inlinable public static var valueMax: Value { 1 }
-    @inlinable public static var type: StorageElementType { .real1U }
 
     //-------------------------------------
     // pointers
@@ -383,6 +375,7 @@ public struct UInt1: PackedStorageElement {
 }
 
 extension Tensor where TensorElement == UInt1 {
+    /// casting initializer
     @inlinable public init(_ other: Tensor<Shape, Bool1>) {
         shape = other.shape
         strides = other.strides
@@ -413,7 +406,6 @@ public struct UInt4: PackedStorageElement {
     @inlinable public static var valueMask: Stored { 0x0F }
     @inlinable public static var valueMin: Value { 0 }
     @inlinable public static var valueMax: Value { 15 }
-    @inlinable public static var type: StorageElementType { .real4U }
 
     //-------------------------------------
     // pointers
@@ -439,7 +431,6 @@ extension Float16: StorageElement {
     @inlinable public static func storedIndex(_ index: Int) -> Int { index }
     @inlinable public static func storedCount(_ count: Int) -> Int { count }
     @inlinable public static func alignment(_ index: Int) -> Int { 0 }
-    @inlinable public static var type: StorageElementType { .real16F }
 
     //-------------------------------------
     // pointers
@@ -491,7 +482,6 @@ extension BFloat16: StorageElement {
     @inlinable public static func storedIndex(_ index: Int) -> Int { index }
     @inlinable public static func storedCount(_ count: Int) -> Int { count }
     @inlinable public static func alignment(_ index: Int) -> Int { 0 }
-    @inlinable public static var type: StorageElementType { .real16BF }
 
     //-------------------------------------
     // pointers
@@ -542,7 +532,6 @@ extension BFloat16: StorageElement {
 extension Bool: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .bool8 }
 
     //-------------------------------------
     // pointers
@@ -561,7 +550,6 @@ extension Bool: StorageElement {
 extension Int8: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real8I }
 
     //-------------------------------------
     // pointers
@@ -580,7 +568,6 @@ extension Int8: StorageElement {
 extension UInt8: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real8U }
 
     //-------------------------------------
     // pointers
@@ -599,7 +586,6 @@ extension UInt8: StorageElement {
 extension Int16: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real16I }
 
     //-------------------------------------
     // pointers
@@ -618,7 +604,6 @@ extension Int16: StorageElement {
 extension UInt16: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real16U }
 
     //-------------------------------------
     // pointers
@@ -637,7 +622,6 @@ extension UInt16: StorageElement {
 extension Int32: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real32I }
 
     //-------------------------------------
     // pointers
@@ -656,7 +640,6 @@ extension Int32: StorageElement {
 extension UInt32: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real32U }
 
     //-------------------------------------
     // pointers
@@ -675,7 +658,6 @@ extension UInt32: StorageElement {
 extension Float: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real32F }
 
     //-------------------------------------
     // pointers
@@ -694,7 +676,6 @@ extension Float: StorageElement {
 extension Double: StorageElement {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType { .real64F }
 
     //-------------------------------------
     // pointers
@@ -711,21 +692,15 @@ extension Double: StorageElement {
 }
 
 //------------------------------------------------------------------------------
-extension Complex: StorageElement {
+extension Complex {
     public typealias Stored = Self
     public typealias Value = Self
-    @inlinable public static var type: StorageElementType {
-        switch RealType.self {
-        case is Float.Type: return .complex32F
-        case is Float16.Type: return .complex16F
-        case is BFloat16.Type: return .complex16BF
-        case is Double.Type: return .complex64F
-        default: fatalError("Complex<\(RealType.self)> not implemented yet")
-        }
-    }
+}
 
-    //-------------------------------------
-    // pointers
+@usableFromInline var _storedZeroComplexFloat = Complex<Float>(0)
+@usableFromInline var _storedOneComplexFloat = Complex<Float>(1)
+
+extension Complex: StorageElement where RealType == Float {
     @inlinable public static var storedZeroPointer: UnsafeRawPointer {
         UnsafeRawPointer(&_storedZeroComplexFloat) 
     }
@@ -735,8 +710,13 @@ extension Complex: StorageElement {
     }
 }
 
-@usableFromInline var _storedZeroComplexFloat = Complex<Float>(0)
-@usableFromInline var _storedOneComplexFloat = Complex<Float>(1)
+//==============================================================================
+/// ScalarMultiplicative
+/// conforming types can be multiplied by a scalar value.
+// This is currently used by the `fill(x:from:to:result:` driver function.
+public protocol ScalarMultiplicative {
+    static func *<T: Numeric>(_ x: Self, _ scalar: T) -> Self
+}
 
 //==============================================================================
 /// BufferElements
@@ -750,7 +730,6 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
 {
     // properties
     public let hostBuffer: UnsafeMutableBufferPointer<TensorElement.Stored>
-    public let isSingleElement: Bool
     public let startIndex: Int
     public let endIndex: Int
     
@@ -761,11 +740,10 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
     /// - Parameters:
     ///  - tensor: the tensor that will be read
     @inlinable public init(tensor: Tensor<Shape, TensorElement>) {
-        assert(tensor.isBufferIterable, "tensor order is not buffer iterable")
+        assert(tensor.isContiguous, "can only iterate contiguous buffer elements")
 
         // make the data range available for reading by the cpu
-        isSingleElement = tensor.isSingleElement
-        let buffer = tensor.read(using: Context.currentQueue)
+        let buffer = tensor.read(using: currentQueue)
         
         // Init members and note that this does not actually mutate, even
         // though we commonly hold a mutable buffer pointer
@@ -787,14 +765,12 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
     /// - Parameters:
     ///  - tensor: the tensor that will be written
     @inlinable public init(tensor: inout Tensor<Shape, TensorElement>) {
-        assert(tensor.isBufferIterable, "tensor order is not buffer iterable")
+        assert(tensor.isContiguous, "can only iterate contiguous buffer elements")
 
         // convert logical base and strided span count to stored.
         // They will not be equal for packed element types like `Int4`
-        isSingleElement = tensor.isSingleElement
-
         // make the data range available for reading/writing by the cpu
-        hostBuffer = tensor.readWrite(using: Context.currentQueue)
+        hostBuffer = tensor.readWrite(using: currentQueue)
         
         // `startIndex` is the logical position of the first
         // `Value` type within the `Stored` type.
@@ -806,29 +782,19 @@ public struct BufferElements<Shape, TensorElement>: MutableCollection
     
     //--------------------------------------------------------------------------
     // index(after:
-    @inlinable public func index(after i: Int) -> Int {
-        i + 1
-    }
+    @inlinable public func index(after i: Int) -> Int { i + 1 }
     
     //--------------------------------------------------------------------------
     // subscript
     @inlinable public subscript(position: Int) -> TensorElement.Value {
         get {
-            if isSingleElement {
-                return TensorElement.value(at: startIndex, from: hostBuffer[0])
-            } else {
-                let si = TensorElement.storedIndex(position)
-                return TensorElement.value(at: position, from: hostBuffer[si])
-            }
+            let si = TensorElement.storedIndex(position)
+            return TensorElement.value(at: position, from: hostBuffer[si])
         }
         
         set(v) {
-            if isSingleElement {
-                TensorElement.store(value: v, at: startIndex, to: &hostBuffer[0])
-            } else {
-                let si = TensorElement.storedIndex(position)
-                TensorElement.store(value: v, at: position, to: &hostBuffer[si])
-            }
+            let si = TensorElement.storedIndex(position)
+            TensorElement.store(value: v, at: position, to: &hostBuffer[si])
         }
     }
 }
@@ -844,7 +810,7 @@ where Shape: TensorShape, TensorElement: StorageElement
     public typealias Index = ElementIndex<Shape>
     public let alignment: Int
     public var hostBuffer: UnsafeMutableBufferPointer<TensorElement.Stored>
-    public weak var storage: StorageBufferType!
+    public weak var storage: Platform.Storage!
     public let storedBase: Int
     public let storedCount: Int
     public let strides: Shape
@@ -852,6 +818,43 @@ where Shape: TensorShape, TensorElement: StorageElement
     public let startIndex: Index
     public let endIndex: Index
 
+    //--------------------------------------------------------------------------
+    /// init
+    /// This initializer is called by `Tensor` initializers to setup for
+    /// possible direct element indexing by the user. The host buffer is
+    /// set to `nil` and requires that `prepareForReadWrite` be called
+    /// before any access to storage.
+    /// `Tensor.startIndex` and `Tensor.makeIndex` call this function each
+    /// time to transparently sync for the user.
+    @inlinable public init(
+        _ count: Int,
+        _ shape: Shape,
+        _ strides: Shape,
+        _ storage: Platform.Storage,
+        _ storageBase: Int,
+        _ order: Order,
+        _ spanCount: Int
+    ) {
+        assert(shape.elementCount() == count, "shape count mismatch")
+
+        // verify storage order is valid for rank
+        assert((order != .NHWC || Shape.rank == 4) &&
+               (order != .NDHWC || Shape.rank == 5))
+
+        self.alignment = TensorElement.alignment(storageBase)
+        self.strides = strides
+        self.storage = storage
+        self.order = order
+        let (storedBase, storedCount) =
+                TensorElement.storedRange(start: storageBase,
+                                          count: spanCount)
+        self.storedBase = storedBase
+        self.storedCount = storedCount
+        startIndex = Index(Shape.zero, 0)
+        endIndex = Index(shape, count)
+        hostBuffer = UnsafeMutableBufferPointer(start: nil, count: 0)
+    }
+    
     //--------------------------------------------------------------------------
     /// init(tensor:
     /// creates a storage buffer iterator for reading tensor elments
@@ -869,44 +872,12 @@ where Shape: TensorShape, TensorElement: StorageElement
     }
     
     //--------------------------------------------------------------------------
-    /// init
-    /// This initializer is called by `Tensor` initializers to setup for
-    /// possible direct element indexing by the user. The host buffer is
-    /// set to `nil` and requires that `prepareForReadWrite` be called
-    /// before any access to storage.
-    /// `Tensor.startIndex` and `Tensor.makeIndex` call this function each
-    /// time to transparently sync for the user.
-    @inlinable public init(
-        _ count: Int,
-        _ shape: Shape,
-        _ strides: Shape,
-        _ storage: StorageBufferType,
-        _ storageBase: Int,
-        _ order: Order,
-        _ spanCount: Int
-    ) {
-        assert(shape.elementCount() == count, "shape count mismatch")
-        self.alignment = TensorElement.alignment(storageBase)
-        self.strides = strides
-        self.storage = storage
-        self.order = order
-        let (storedBase, storedCount) =
-                TensorElement.storedRange(start: storageBase,
-                                          count: spanCount)
-        self.storedBase = storedBase
-        self.storedCount = storedCount
-        startIndex = Index(Shape.zero, 0)
-        endIndex = Index(shape, count)
-        hostBuffer = UnsafeMutableBufferPointer(start: nil, count: 0)
-    }
-    
-    //--------------------------------------------------------------------------
     // prepareForRead
     @inlinable public func prepareForRead() {
         let buff = storage.read(type: TensorElement.Stored.self,
                                 at: storedBase,
                                 count: storedCount,
-                                using: Context.currentQueue)
+                                using: currentQueue)
         // this never actually mutates
         let p = UnsafeMutablePointer(mutating: buff.baseAddress)
         hostBuffer = UnsafeMutableBufferPointer(start: p, count: buff.count)
@@ -918,7 +889,7 @@ where Shape: TensorShape, TensorElement: StorageElement
         hostBuffer = storage.readWrite(type: TensorElement.Stored.self,
                                        at: storedBase,
                                        count: storedCount,
-                                       using: Context.currentQueue)
+                                       using: currentQueue)
     }
     
     //--------------------------------------------------------------------------
@@ -939,15 +910,7 @@ where Shape: TensorShape, TensorElement: StorageElement
                 // convert to stored index which might be less for packed elements
                 let si = TensorElement.storedIndex(i)
                 return TensorElement.value(at: i, from: hostBuffer[si])
-                
-            case .colTiled32:
-                fatalError("not implemented yet")
-                
-            case .colTiledTC32x8:
-                fatalError("not implemented yet")
-                
-            case .colTiledTC32x32:
-                fatalError("not implemented yet")
+            default: fatalError("not implemented yet")
             }
         }
         
@@ -960,16 +923,9 @@ where Shape: TensorShape, TensorElement: StorageElement
                 // convert to stored index which might be less for packed elements
                 let si = TensorElement.storedIndex(i)
                 TensorElement.store(value: newValue, at: i, to: &hostBuffer[si])
-                
-            case .colTiled32:
-                fatalError("not implemented yet")
-                
-            case .colTiledTC32x8:
-                fatalError("not implemented yet")
-                
-            case .colTiledTC32x32:
-                fatalError("not implemented yet")
+            default: fatalError("not implemented yet")
             }
         }
     }
 }
+

@@ -33,6 +33,14 @@ class test_Subscripting: XCTestCase {
         ("test_Tensor1WriteRange", test_Tensor1WriteRange),
     ]
     
+    override func setUpWithError() throws {
+        // log.level = .diagnostic
+    }
+
+    override func tearDownWithError() throws {
+        // log.level = .error
+    }
+
     //--------------------------------------------------------------------------
     func test_perfTensorSubview() {
         #if !DEBUG
@@ -68,7 +76,6 @@ class test_Subscripting: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_writeToRepeated() {
-//        Context.log.level = .diagnostic
         // test through subscript
         var a = repeating(1, (2, 3))
         a[1, 1] = 42
@@ -195,7 +202,7 @@ class test_Subscripting: XCTestCase {
 
     //--------------------------------------------------------------------------
     func test_Tensor1WriteRange() {
-//        Platform.log.level = .diagnostic
+//        ComputePlatform.log.level = .diagnostic
         var v1 = array(0...6)
         let sevens = repeating(7, (3))
         v1[2...4] = sevens

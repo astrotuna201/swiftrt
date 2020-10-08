@@ -5,7 +5,7 @@ import PackageDescription
 import Foundation
 
 //------------------------------------------------------------------------------
-// determine platform build type "cpu" or "cuda"
+// determine platform build type
 let validPlatforms = Set(arrayLiteral: "cpu", "cuda")
 let environment = ProcessInfo.processInfo.environment
 let platform = (environment["SWIFTRT_PLATFORM"] ?? "cpu").lowercased()
@@ -61,6 +61,7 @@ targets.append(contentsOf: [
     .target(name: "SwiftRTCore", dependencies: coreDependencies, exclude: exclusions),
     
     // tests
+    .testTarget(name: "BenchmarkTests", dependencies: testDependencies),
     .testTarget(name: "SwiftRTCoreTests", dependencies: testDependencies),
     .testTarget(name: "SwiftRTLayerTests", dependencies: testDependencies),
 ])

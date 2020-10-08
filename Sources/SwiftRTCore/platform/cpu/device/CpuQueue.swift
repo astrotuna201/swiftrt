@@ -32,10 +32,11 @@ public final class CpuQueue: DeviceQueue, CpuFunctions
     public let memoryType: MemoryType
     public let mode: DeviceQueueMode
     public let name: String
-    public let queue: DispatchQueue
     public let group: DispatchGroup
+    public let queue: DispatchQueue
+    public let queueLimit: DispatchSemaphore
     public let usesCpu: Bool
-    
+
     //--------------------------------------------------------------------------
     // initializers
     @inlinable public init(
@@ -44,20 +45,18 @@ public final class CpuQueue: DeviceQueue, CpuFunctions
         queueMode: DeviceQueueMode,
         memoryType: MemoryType
     ) {
-        self.id = Context.nextQueueId
-        self.name = name
+        let processorCount = ProcessInfo.processInfo.activeProcessorCount
         self.deviceIndex = deviceIndex
-        self.creatorThread = Thread.current
-        self.defaultQueueEventOptions = QueueEventOptions()
+        self.name = name
         self.memoryType = memoryType
-        self.mode = queueMode
-        self.queue = DispatchQueue(label: "\(name)")
-        self.group = DispatchGroup()
-        self.usesCpu = true
-        
-        let modeLabel = queueMode == .async ? "asynchronous" : "synchronous"
-        diagnostic(.create, "\(modeLabel) queue: \(name)",
-                   categories: .queueAlloc)
+        id = Platform.queueId.next
+        creatorThread = Thread.current
+        defaultQueueEventOptions = QueueEventOptions()
+        mode = queueMode
+        group = DispatchGroup()
+        queue = DispatchQueue(label: name)
+        queueLimit = DispatchSemaphore(value: processorCount)
+        usesCpu = true
     }
     
     deinit {
@@ -77,5 +76,41 @@ public final class CpuQueue: DeviceQueue, CpuFunctions
                 .allocate(byteCount: byteCount,
                           alignment: MemoryLayout<Int>.alignment)
         return CpuDeviceMemory(deviceIndex, buffer, memoryType)
+    }
+
+    //--------------------------------------------------------------------------
+    @inlinable public func recordEvent() -> CpuEvent {
+        let event = CpuEvent(mode == .sync ? .signaled : .blocking) 
+        if mode == .async {
+            queue.async(group: group) {
+                event.signal()
+            }
+        }
+        return event
+    }
+    
+    //--------------------------------------------------------------------------
+    /// wait(for event:
+    /// causes this queue to wait until the event has occurred
+    @inlinable public func wait(for event: CpuEvent) {
+        diagnostic(.wait, "\(name) will wait for event(\(event.id))",
+                   categories: .queueSync)
+        if mode == .async {
+            queue.async(group: group) {
+                event.wait()
+            }
+        } else {
+            event.wait()
+        }
+    }
+    
+    //--------------------------------------------------------------------------
+    // waitForCompletion
+    // the synchronous queue completes work as it is queued,
+    // so it is always complete
+    @inlinable public func waitForCompletion() {
+        if mode == .async {
+            group.wait()
+        }
     }
 }

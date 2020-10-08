@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 import Foundation
+import Numerics
 
 //==============================================================================
 // ranked convenience types
@@ -50,28 +51,10 @@ public typealias TensorR6<Element: StorageElement> = Tensor<Shape6, Element>
     return repeatedStrides
 }
 
-//------------------------------------------------------------------------------
-// TODO: THIS NEEDS TO BE REMOVED. IT'S A HACK FOR AD SUPPORT
-@usableFromInline func match<S,E>(_ lhs: Tensor<S,E>, _ rhs: Tensor<S,E>)
-    -> (Tensor<S,E>, Tensor<S,E>) where S: TensorShape
-{
-    if lhs.count == rhs.count {
-        return (lhs, rhs)
-    } else if lhs.count > rhs.count {
-        return (lhs, Tensor<S,E>(repeating: rhs, to: lhs.shape))
-    } else {
-        return (Tensor<S,E>(repeating: lhs, to: rhs.shape), rhs)
-    }
-}
-
 //==============================================================================
 // Tensor initializers
 //==============================================================================
 public extension Tensor {
-    @inlinable var diagnosticName: String {
-        "\(name)R\(Shape.rank)_(\(storage.id))"
-    }
-
     //--------------------------------------------------------------------------
     /// init(shape:order:
     /// creates a dense shape
@@ -85,8 +68,8 @@ public extension Tensor {
         name: String = defaultTensorName
     ) {
         let count = shape.elementCount()
-        let storage = StorageBufferType(type: TensorElement.self,
-                                        count: count, name: name)
+        let storage = Platform.Storage(type: TensorElement.self,
+                                           count: count, name: name)
         
         self.init(shape: shape,
                   strides: shape.strides(for: order),
@@ -96,12 +79,6 @@ public extension Tensor {
                   spanCount: count,
                   order: order,
                   shared: false)
-    }
-    
-    //--------------------------------------------------------------------------
-    /// init
-    @inlinable init() {
-        self.init(shape: Shape.zero)
     }
     
     //--------------------------------------------------------------------------
@@ -136,7 +113,7 @@ public extension Tensor {
     ///  - shape: the shape of the tensor
     ///  - order: the storage order of the elements
     ///  - name: the name of the tensor
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init(
         repeating element: TensorElement.Value,
         to shape: Shape,
@@ -152,7 +129,7 @@ public extension Tensor {
     /// - Parameters:
     ///  - other: the tensor to repeat
     ///  - shape: the shape of the tensor
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init(repeating other: Self, to shape: Shape) {
         let strides = repeatedStrides(matching: other, to: shape)
         let count = shape.elementCount()
@@ -179,7 +156,7 @@ public extension Tensor {
     }
 }
 
-extension Tensor where TensorElement.Value: DifferentiableElement
+extension Tensor where TensorElement.Value: DifferentiableNumeric
 {
     @derivative(of: init(repeating:to:order:name:))
     @usableFromInline static func _vjpInit(
@@ -204,12 +181,72 @@ extension Tensor where TensorElement.Value: DifferentiableElement
 }
 
 //==============================================================================
+// Tensor range initializers
+//==============================================================================
+
+public extension Tensor {
+    //--------------------------------------------------------------------------
+    /// `init(range:shape:order:name:`
+    /// initializes the tensor with a progressive logical index value
+    ///
+    /// - Parameters:
+    ///  - range: the index range. The number of elements in the range
+    ///    must be equal to the number of elements described by shape.
+    ///  - shape: the shape of the tensor
+    ///  - order: the storage order of the elements
+    ///  - name: the name of the tensor
+    @inlinable init(
+        range: Range<Int>,
+        _ shape: Shape,
+        order: Order = .defaultOrder,
+        name: String = defaultTensorName
+    ) where TensorElement.Value: Numeric {
+        self.init(shape: shape, order: order, name: name)
+        fill(&self, with: range)
+    }
+    
+    //--------------------------------------------------------------------------
+    /// `init(from:to:shape:order:name:`
+    /// initializes the tensor with a progressive logical index value
+    ///
+    /// - Parameters:
+    ///  - from: the initial value in the range
+    ///  - to: the last value in the range
+    ///  - shape: the shape of the tensor
+    ///  - order: the storage order of the elements
+    ///  - name: the name of the tensor
+    @inlinable init(
+        from first: TensorElement.Value,
+        to last: TensorElement.Value,
+        _ shape: Shape,
+        order: Order = .defaultOrder,
+        name: String = defaultTensorName
+    ) where TensorElement.Value: BinaryInteger {
+        self.init(shape: shape, order: order, name: name)
+        let step = (last - first) / TensorElement.Value(exactly: count - 1)!
+        currentQueue.fill(&self, from: first, to: last, by: step)
+    }
+
+    @inlinable init(
+        from first: TensorElement.Value,
+        to last: TensorElement.Value,
+        _ shape: Shape,
+        order: Order = .defaultOrder,
+        name: String = defaultTensorName
+    ) where TensorElement.Value: AlgebraicField {
+        self.init(shape: shape, order: order, name: name)
+        let step = (last - first) / TensorElement.Value(exactly: count - 1)!
+        currentQueue.fill(&self, from: first, to: last, by: step)
+    }
+}
+
+//==============================================================================
 // Tensor collection initializers
 //==============================================================================
 
 public extension Tensor {
     //--------------------------------------------------------------------------
-    /// `init(storage:shape:order:name:`
+    /// `init(stored:shape:order:name:`
     /// initializes the tensor storage buffer with `storage elements`
     ///
     /// - Parameters:
@@ -231,10 +268,9 @@ public extension Tensor {
         _ shape: Shape,
         order: Order = .defaultOrder,
         name: String = defaultTensorName
-    ) where C: Collection, C.Element == TensorElement.Stored
-    {
+    ) where C: Collection, C.Element == TensorElement.Stored {
         self.init(shape: shape, order: order, name: name)
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         assert(buffer.count == elements.count)
         _ = buffer.initialize(from: elements)
     }
@@ -263,7 +299,7 @@ public extension Tensor {
         self.init(shape: shape, order: order, name: name)
         
         // get the storage buffer and set the values
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         for (i, v) in elements.enumerated() {
             TensorElement.set(value: v, in: buffer, at: i)
         }
@@ -288,7 +324,7 @@ public extension Tensor {
         self.init(shape: shape, order: order, name: name)
         
         // get the storage buffer and set the values
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         for (i, v) in elements.enumerated() {
             TensorElement.set(value: Element(exactly: v ? 1 : 0)!,
                               in: buffer, at: i)
@@ -314,7 +350,7 @@ public extension Tensor {
         self.init(shape: shape, order: order, name: name)
         
         // get the storage buffer and set the values
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         for (i, v) in elements.enumerated() {
             TensorElement.set(value: Element(v != 0), in: buffer, at: i)
         }
@@ -341,7 +377,7 @@ public extension Tensor {
         self.init(shape: shape, order: order, name: name)
         
         // get the storage buffer on the cpu and set the values
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         for (i, v) in elements.enumerated() {
             TensorElement.set(value: Element(exactly: v)!, in: buffer, at: i)
         }
@@ -369,7 +405,7 @@ public extension Tensor {
         self.init(shape: shape, order: order, name: name)
         
         // get the storage buffer and set the values
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         for (i, v) in elements.enumerated() {
             TensorElement.set(value: Element(v), in: buffer, at: i)
         }
@@ -397,7 +433,7 @@ public extension Tensor {
         self.init(shape: shape, order: order, name: name)
         
         // get the storage buffer and set the values
-        let buffer = readWrite(using: Context.appThreadQueue)
+        let buffer = readWrite(using: Platform.syncQueue)
         for (i, v) in elements.enumerated() {
             TensorElement.set(value: Element(v), in: buffer, at: i)
         }
@@ -425,7 +461,7 @@ public extension Tensor {
 ///  - order: the storage order of the new tensor
 public extension Tensor {
 
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S>(
         reshaping other: Tensor<S,TensorElement>,
         to newShape: Shape,
@@ -468,7 +504,7 @@ public extension Tensor {
                 shape: other.shape,
                 strides: strides,
                 count: other.count,
-                storage: StorageBufferType(type: TensorElement.self,
+                storage: Platform.Storage(type: TensorElement.self,
                                            count: source.count,
                                            name: other.name),
                 storageBase: 0,
@@ -477,10 +513,10 @@ public extension Tensor {
                 shared: other.isShared)
             
             // performs an indexed copy which reorders the elements
-            Context.currentQueue.diagnostic(.reorder,
-                "copying \(other.diagnosticName) --> " +
-                "\(source.diagnosticName) \(Element.self)[\(source.count)]" +
-                " on \(Context.currentQueue.name)",
+            currentQueue.diagnostic(.reorder,
+                "copying \(other.name) order: \(other.order) --> " +
+                "\(source.name) \(Element.self)[\(source.count)] " +
+                "order: \(source.order) on \(currentQueue.name)",
                 categories: [.dataCopy, .dataReorder])
             
             copy(from: other, to: &source)
@@ -498,7 +534,7 @@ public extension Tensor {
     }
 }
 
-extension Tensor where TensorElement.Value: DifferentiableElement
+extension Tensor where TensorElement.Value: DifferentiableNumeric
 {
     @derivative(of: init(reshaping:to:order:))
     @usableFromInline static func _vjpInit<S>(
@@ -524,7 +560,7 @@ extension Tensor where TensorElement.Value: DifferentiableElement
 
 public extension Tensor {
     
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S, Axes>(
         expanding other: Tensor<S,TensorElement>,
         axes: Axes
@@ -581,7 +617,7 @@ public extension Tensor {
                   shared: other.isShared)
     }
     
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S>(expanding other: Tensor<S,TensorElement>, axes: Int...)
         where S: TensorShape
     {
@@ -589,7 +625,7 @@ public extension Tensor {
     }
 }
 
-extension Tensor where TensorElement.Value: DifferentiableElement
+extension Tensor where TensorElement.Value: DifferentiableNumeric
 {
     @derivative(of: init(expanding:axes:))
     @usableFromInline static func _vjpInit<S, Axes>(
@@ -610,7 +646,7 @@ extension Tensor where TensorElement.Value: DifferentiableElement
 ///  - axes: a list of axes to squeeze
 public extension Tensor {
     
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S,Axes>(
         squeezing other: Tensor<S,TensorElement>,
         axes: Axes
@@ -644,7 +680,7 @@ public extension Tensor {
                   shared: other.isShared)
     }
     
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S>(squeezing other: Tensor<S,TensorElement>, axes: Int...)
         where S: TensorShape
     {
@@ -652,7 +688,7 @@ public extension Tensor {
     }
 }
 
-extension Tensor where TensorElement.Value: DifferentiableElement
+extension Tensor where TensorElement.Value: DifferentiableNumeric
 {
     @derivative(of: init(squeezing:axes:))
     @usableFromInline static func _vjpInit<S, Axes>(
@@ -673,7 +709,7 @@ extension Tensor where TensorElement.Value: DifferentiableElement
 ///  - axis: the axis to stack along
 public extension Tensor {
 
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S>(
         stacking others: [Tensor<S,TensorElement>],
         axis: Int = 0
@@ -687,7 +723,7 @@ public extension Tensor {
         stack(others, axis: positiveAxis, into: &self)
     }
     
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init<S>(
         stacking others: Tensor<S,TensorElement>...,
         axis: Int = 0
@@ -721,7 +757,7 @@ public extension Tensor {
 ///  - others: the collection to squeeze
 ///  - axis: the axis to stack along
 ///  - result: the output tensor
-@differentiable(where E.Value: DifferentiableElement)
+@differentiable(where E.Value: DifferentiableNumeric)
 @inlinable public func stack<S,SR,E>(
     _ tensors: [Tensor<S,E>],
     axis: Int = 0,
@@ -845,7 +881,7 @@ public extension Tensor {
 ///   `-rank..<rank`
 public extension Tensor {
 
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable init(
         transposing other: Self,
         permutatedBy permutations: Shape? = nil)
@@ -887,16 +923,16 @@ public extension Tensor {
     }
     
     /// - Returns: transpose of self
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable var t: Self { Self(transposing: self) }
     
-    @differentiable(where TensorElement.Value: DifferentiableElement)
+    @differentiable(where TensorElement.Value: DifferentiableNumeric)
     @inlinable func transposed(permutatedBy permutations: Shape) -> Self {
         Self(transposing: self, permutatedBy: permutations)
     }
 }
 
-extension Tensor where TensorElement.Value: DifferentiableElement {
+extension Tensor where TensorElement.Value: DifferentiableNumeric {
     
     @derivative(of: init(transposing:permutatedBy:))
     @usableFromInline static func _vjpInit(
@@ -968,7 +1004,7 @@ extension Tensor where TensorElement.Value: Numeric {
         name: String = defaultTensorName
     ) {
         self.init(shape: shape, order: order, name: name)
-        Context.currentQueue.eye(&self, offset: offset)
+        currentQueue.eye(&self, offset: offset)
     }
 }
 
