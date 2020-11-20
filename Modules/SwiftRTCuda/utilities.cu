@@ -13,9 +13,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include "fill_c.h"
+#include "utilities_api.h"
 
-//------------------------------------------------------------------------------
+
+//==============================================================================
+// srtCopy
+cudaError_t srtCopy(
+    const void* x, const srtTensorDescriptor* xDesc,
+    void* out, const srtTensorDescriptor* oDesc,
+    cudaStream_t stream
+) {
+    return cudaErrorNotSupported;
+}
+
+//==============================================================================
 // device kernel
 __device__ int64_t globalElapsed;
 

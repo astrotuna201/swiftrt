@@ -17,6 +17,8 @@ import Foundation
 import SwiftRTCore
 import Numerics
 
+#if canImport(TensorFlow)
+
 //==============================================================================
 /// RNNCellInput
 /// An input to a recurrent neural network
@@ -153,8 +155,7 @@ where Element: StorageElement,
     /// - Returns: The hidden state.
     @differentiable
     @inlinable public func callAsFunction(_ input: Input) -> Output {
-        let concatenatedInput = input.input
-                .concatenated(with: input.state, alongAxis: 1)
+        let concatenatedInput = concatenate(input.input, input.state, axis: 1)
         let newState = tanh(matmul(concatenatedInput, weight) + bias)
         return Output(output: newState, state: newState)
     }
@@ -457,3 +458,5 @@ public typealias LSTM<Element> = RecurrentLayer<LSTMCell<Element>>
 public typealias GRU<Element> = RecurrentLayer<GRUCell<Element>>
     where Element: StorageElement,
           Element.Value: StorageElement & Real & BinaryFloatingPoint & DifferentiableNumeric
+
+#endif

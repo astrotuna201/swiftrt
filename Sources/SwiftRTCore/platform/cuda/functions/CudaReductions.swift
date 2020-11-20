@@ -13,100 +13,234 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-import SwiftRTCuda
+
 import Numerics
+import SwiftRTCuda
 
 //==============================================================================
 // CudaQueue functions
 extension CudaQueue {
-    //--------------------------------------------------------------------------
-    @inlinable public func reduceAll<S>(
-        _ x: Tensor<S,Bool>,
-        _ out: inout Tensor<S,Bool>
-    ) {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else { cpu_reduceAll(x, &out); return }
-        diagnostic(.queueGpu, "reduceAll() on \(name)", categories: .queueGpu)
-        
-        cpuFallback(cudaErrorNotSupported) { $0.reduceAll(x, &out) }
+  //--------------------------------------------------------------------------
+  @inlinable public func abssum<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: SignedNumeric & Comparable {
+    var status: cudaError_t
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_abssum(x, &out)
+      return
     }
 
-    //--------------------------------------------------------------------------
-    @inlinable public func reduceAny<S>(
-        _ x: Tensor<S,Bool>,
-        _ out: inout Tensor<S,Bool>
-    ) {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else { cpu_reduceAny(x, &out); return }
-        diagnostic(.queueGpu, "reduceAny() on \(name)", categories: .queueGpu)
-        
-        cpuFallback(cudaErrorNotSupported) { $0.reduceAny(x, &out) }
-    }
-
-    //--------------------------------------------------------------------------
-    @inlinable public func reduceSum<S,E>(
-        _ x: Tensor<S,E>,
-        _ out: inout Tensor<S,E>
-    ) where E.Value: AdditiveArithmetic {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else { cpu_reduceSum(x, &out); return }
-        diagnostic(.queueGpu, "reduceSum() on \(name)", categories: .queueGpu)
-        
-        cpuFallback(cudaErrorNotSupported) { $0.reduceSum(x, &out) }
-    }
-
-    //--------------------------------------------------------------------------
-    @inlinable public func reduceMean<S,E>(
-        _ x: Tensor<S,E>,
-        _ out: inout Tensor<S,E>
-    ) where E.Value: AlgebraicField {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else { cpu_reduceMean(x, &out); return }
-        diagnostic(.queueGpu, "reduceMean() on \(name)", categories: .queueGpu)
-        
-        cpuFallback(cudaErrorNotSupported) { $0.reduceMean(x, &out) }
-    }
-
-    //--------------------------------------------------------------------------
-    @inlinable public func reduceMin<S,E>(
-        _ x: Tensor<S,E>,
-        _ out: inout Tensor<S,E>
-    ) where E.Value: Comparable {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else { cpu_reduceMin(x, &out); return }
-        diagnostic(.queueGpu, "reduceMin() on \(name)", categories: .queueGpu)
-        
-        cpuFallback(cudaErrorNotSupported) { $0.reduceMin(x, &out) }
-    }
-
-    //--------------------------------------------------------------------------
-    @inlinable public func reduceMax<S,E>(
-        _ x: Tensor<S,E>,
-        _ out: inout Tensor<S,E>
-    ) where E.Value: Comparable {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else { cpu_reduceMax(x, &out); return }
-        diagnostic(.queueGpu, "reduceMax() on \(name)", categories: .queueGpu)
-        
-        cpuFallback(cudaErrorNotSupported) { $0.reduceMax(x, &out) }
-    }
-
-    //--------------------------------------------------------------------------
-    @inlinable func reduce<S,E>(
-        _ opName: String,
-        _ x: Tensor<S,E>,
-        _ out: inout Tensor<S,E>,
-        _ opId: ReductionOp,
-        _ opNext: @escaping (E.Value, E.Value) -> E.Value,
-        _ opFinal: ReduceOpFinal<Tensor<S,E>>?
-    ) {
-        assert(out.isContiguous, _messageElementsMustBeContiguous)
-        guard useGpu else {
-            cpu_reduce(opName, x, &out, opId, opNext, opFinal); return
+    if out.count == 1 {
+      diagnostic(.queueGpu, "abssum(\(x.name)) Flat", categories: .queueGpu)
+      status = out.withMutableTensor(using: self) { o, oDesc in
+        x.withTensor(using: self) { x, xDesc in
+          srtAbsSum(x, xDesc, o, oDesc, stream)
         }
-
-        cpuFallback(cudaErrorNotSupported) {
-            $0.reduce(opName, x, &out, opId, opNext, opFinal)
-        }
+      }
+    } else {
+      status = cudaErrorNotSupported
     }
+    cpuFallback(status) { $0.abssum(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func all<S>(
+    _ x: Tensor<S, Bool>,
+    _ out: inout Tensor<S, Bool>
+  ) {
+    var status: cudaError_t
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_all(x, &out)
+      return
+    }
+
+    if out.count == 1 {
+      diagnostic(.queueGpu, "all(\(x.name)) Flat", categories: .queueGpu)
+      status = out.withMutableTensor(using: self) { o, oDesc in
+        x.withTensor(using: self) { x, xDesc in
+          srtAll(x, xDesc, o, oDesc, stream)
+        }
+      }
+    } else {
+      status = cudaErrorNotSupported
+    }
+    cpuFallback(status) { $0.all(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func any<S>(
+    _ x: Tensor<S, Bool>,
+    _ out: inout Tensor<S, Bool>
+  ) {
+    var status: cudaError_t
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_any(x, &out)
+      return
+    }
+
+    if out.count == 1 {
+      diagnostic(.queueGpu, "any(\(x.name)) Flat", categories: .queueGpu)
+      status = out.withMutableTensor(using: self) { o, oDesc in
+        x.withTensor(using: self) { x, xDesc in
+          srtAny(x, xDesc, o, oDesc, stream)
+        }
+      }
+    } else {
+      status = cudaErrorNotSupported
+    }
+    cpuFallback(status) { $0.any(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func sum<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: AdditiveArithmetic {
+    var status: cudaError_t
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_sum(x, &out)
+      return
+    }
+
+    if out.count == 1 {
+      diagnostic(.queueGpu, "sum(\(x.name)) Flat", categories: .queueGpu)
+      status = out.withMutableTensor(using: self) { o, oDesc in
+        x.withTensor(using: self) { x, xDesc in
+          srtSum(x, xDesc, o, oDesc, stream)
+        }
+      }
+    } else {
+      status = cudaErrorNotSupported
+    }
+    cpuFallback(status) { $0.sum(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func mean<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: AlgebraicField {
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_mean(x, &out)
+      return
+    }
+    // diagnostic(.queueGpu, "mean(\(x.name)) Flat", categories: .queueGpu)
+
+    cpuFallback(cudaErrorNotSupported) { $0.mean(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func min<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: Comparable & ComparableLimits {
+    var status: cudaError_t
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_min(x, &out)
+      return
+    }
+
+    if out.count == 1 {
+      diagnostic(.queueGpu, "min(\(x.name)) Flat", categories: .queueGpu)
+      status = out.withMutableTensor(using: self) { o, oDesc in
+        x.withTensor(using: self) { x, xDesc in
+          srtMinValue(x, xDesc, o, oDesc, stream)
+        }
+      }
+    } else {
+      status = cudaErrorNotSupported
+    }
+    cpuFallback(status) { $0.min(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func argmin<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: Comparable & ComparableLimits {
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_argmin(x, &out)
+      return
+    }
+    // diagnostic(.queueGpu, "argmin(\(x.name)) Flat", categories: .queueGpu)
+
+    cpuFallback(cudaErrorNotSupported) { $0.argmin(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func max<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: Comparable & ComparableLimits {
+    var status: cudaError_t
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_max(x, &out)
+      return
+    }
+
+    if out.count == 1 {
+      diagnostic(.queueGpu, "max(\(x.name)) Flat", categories: .queueGpu)
+      status = out.withMutableTensor(using: self) { o, oDesc in
+        x.withTensor(using: self) { x, xDesc in
+          srtMaxValue(x, xDesc, o, oDesc, stream)
+        }
+      }
+    } else {
+      status = cudaErrorNotSupported
+    }
+    cpuFallback(status) { $0.max(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func argmax<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: Comparable & ComparableLimits {
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_argmax(x, &out)
+      return
+    }
+    // diagnostic(.queueGpu, "argmax(\(x.name)) Flat", categories: .queueGpu)
+
+    cpuFallback(cudaErrorNotSupported) { $0.argmax(x, &out) }
+  }
+
+  //--------------------------------------------------------------------------
+  @inlinable public func prod<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: Numeric {
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_prod(x, &out)
+      return
+    }
+    // diagnostic(.queueGpu, "prod(\(x.name)) Flat", categories: .queueGpu)
+
+    cpuFallback(cudaErrorNotSupported) { $0.prod(x, &out) }
+  }
+  //--------------------------------------------------------------------------
+  @inlinable public func prodNonZeros<S, E>(
+    _ x: Tensor<S, E>,
+    _ out: inout Tensor<S, E>
+  ) where E.Value: Numeric {
+    assert(out.isContiguous, _messageElementsMustBeContiguous)
+    guard useGpu else {
+      cpu_prodNonZeros(x, &out)
+      return
+    }
+    // diagnostic(.queueGpu, "prodNonZeros(\(x.name)) Flat", categories: .queueGpu)
+
+    cpuFallback(cudaErrorNotSupported) { $0.prodNonZeros(x, &out) }
+  }
 }

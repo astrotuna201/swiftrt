@@ -15,69 +15,72 @@
 //
 #pragma once
 #include <stdint.h>
-#include <cuda.h>
 #include <vector_types.h>
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
-#include "complex.h"
+#include <type_traits>
 
-/* Set up function decorations */
-#ifndef __CUDA_DEVICE__
-#if defined(__CUDACC__)
-#define __CUDA_DEVICE__ __device__
-#else /* !defined(__CUDACC__) */
-#define __CUDA_DEVICE__
-#endif /* defined(__CUDACC_) */
-#endif
+#include "cuda_macros.cuh"
+#include "float16.cuh"
+#include "bfloat16.cuh"
+#include "complex.cuh"
+#include "simd_types.cuh"
 
 //==============================================================================
-// used for casting between gpu simd types and uint32_t
-#define UINT_CREF(_v) reinterpret_cast<const unsigned&>(_v)
-#define CAST(type, _v) (*reinterpret_cast<const type*>(&(_v)))
+// extend standard traits
+namespace std {
+    //--------------------------------------------------------------------------
+    // is_floating_point
+    template<>
+    struct __is_floating_point_helper<float16>: public true_type { };
 
-//==============================================================================
-// half precision real types
-typedef __half  float16;
-typedef __half2 float162;
+    template<>
+    struct __is_floating_point_helper<float162>: public true_type { };
 
-__CUDA_DEVICE__ inline float162 init_float162(const float16& x, const float16& y) {
-    float162 v; v.x = x; v.y = y; return v;
+    template<>
+    struct __is_floating_point_helper<bfloat16>: public true_type { };
+
+    template<>
+    struct __is_floating_point_helper<bfloat162>: public true_type { };
+
+    //--------------------------------------------------------------------------
+    // is_integral
+    template<>
+    struct __is_integral_helper<char4>: public true_type { };
+
+    template<>
+    struct __is_integral_helper<uchar4>: public true_type { };
+
+    template<>
+    struct __is_integral_helper<short2>: public true_type { };
+
+    template<>
+    struct __is_integral_helper<ushort2>: public true_type { };
+
+    //--------------------------------------------------------------------------
+    // is_signed
+    template<>
+    struct __is_signed_helper<float16>: public true_type { };
+
+    template<>
+    struct __is_signed_helper<float162>: public true_type { };
+
+    template<>
+    struct __is_signed_helper<bfloat16>: public true_type { };
+
+    template<>
+    struct __is_signed_helper<bfloat162>: public true_type { };
+
+    template<>
+    struct __is_signed_helper<char4>: public true_type { };
+
+    template<>
+    struct __is_signed_helper<uchar4>: public false_type { };
+
+    template<>
+    struct __is_signed_helper<short2>: public true_type { };
+
+    template<>
+    struct __is_signed_helper<ushort2>: public false_type { };
 }
-
-typedef __nv_bfloat16  bfloat16;
-typedef __nv_bfloat162 bfloat162;
-
-__CUDA_DEVICE__ inline bfloat162 init_bfloat162(const bfloat16& x, const bfloat16& y) {
-    bfloat162 v; v.x = x; v.y = y; return v;
-}
-
-//==============================================================================
-// supplemental logical types
-struct bool2 {
-    bool x, y;
-    __CUDA_HOSTDEVICE__ inline bool2() { x = false; y = false; }
-    __CUDA_HOSTDEVICE__ inline bool2(bool _x, bool _y) { x = _x; y = _y; }
-    
-    __CUDA_DEVICE__ inline bool2(float162 v) { x = v.x; y = v.y; }
-    __CUDA_DEVICE__ inline bool2(bfloat162 v) { x = v.x; y = v.y; }
-    __CUDA_DEVICE__ inline bool2(unsigned v) {
-        x = v & 0xFF;
-        y = (v >> 16) & 0xFF;
-    }
-};
-
-struct bool4 {
-    bool x, y, z, w;
-    __CUDA_HOSTDEVICE__ inline bool4() {
-        x = false; y = false; z = false; w = false;
-    }
-    __CUDA_HOSTDEVICE__ inline bool4(bool _x, bool _y, bool _z, bool _w) {
-        x = _x; y = _y; z = _z; w = _w;
-    }
-    __CUDA_HOSTDEVICE__ inline bool4(unsigned v) {
-        *this = *reinterpret_cast<const bool4*>(&v);
-    }
-};
 
 
 //==============================================================================
@@ -89,22 +92,27 @@ inline constexpr bool isSame() {
 
 template<typename A>
 inline constexpr bool isInteger() {
-    return std::is_integral<A>::value ||
-        std::is_same<A,char4>::value  || std::is_same<A,uchar4>::value ||
-        std::is_same<A,short2>::value || std::is_same<A,ushort2>::value;
+    return std::is_integral<A>::value;
 }
 
 template<typename A>
 inline constexpr bool isFloating() {
-    return 
-        std::is_floating_point<A>::value ||
-        std::is_same<A,float16>::value  || std::is_same<A,float162>::value ||
-        std::is_same<A,bfloat16>::value || std::is_same<A,bfloat162>::value;
+    return std::is_floating_point<A>::value;
 }
 
 template<typename A>
 inline constexpr bool isComplex() {
-    return std::is_same<A, Complex<float>>::value;
+    return std::is_same<A, Complex<float>>::value ||
+        std::is_same<A, Complex<float16>>::value ||
+        std::is_same<A, Complex<bfloat16>>::value;
+}
+
+template<typename ComplexType, typename RealType>
+inline constexpr bool isComplexRealType() {
+    if constexpr (isComplex<ComplexType>()) {
+        return std::is_same<typename ComplexType::RealType, RealType>::value;
+    }
+    return false;
 }
 
 template<typename A>
@@ -130,7 +138,7 @@ inline constexpr bool isEquatable() {
 
 template<typename A>
 inline constexpr bool isSignedNumeric() {
-    return isNumeric<A>() && std::is_signed<A>::value;
+    return std::is_signed<A>::value || isFloating<A>() || isComplex<A>();
 }
 
 template<typename A>
@@ -139,7 +147,7 @@ inline constexpr bool isPacked() {
     std::is_same<A,bool2>::value  || std::is_same<A,bool4>::value ||
     std::is_same<A,char4>::value  || std::is_same<A,uchar4>::value ||
     std::is_same<A,short2>::value || std::is_same<A,ushort2>::value ||
-    std::is_same<A,float162>::value || std::is_same<A,bfloat162>::value;
+    std::is_same<A,half2>::value || std::is_same<A,bfloat162>::value;
 }
 
 //==============================================================================
@@ -178,9 +186,9 @@ template<> struct packed<uint16_t> {
     }
 };
 
-template<> struct packed<float16> {
-    typedef float162 type;
-    inline static type value(const float16 v) {
+template<> struct packed<half> {
+    typedef half2 type;
+    inline static type value(const half v) {
         type p; p.x = v; p.y = v; return p;
     }
 };
@@ -209,11 +217,13 @@ template<> struct matching_packed<short2, int16_t> { typedef short2 type; };
 template<> struct matching_packed<ushort2, bool> { typedef bool2 type; };
 template<> struct matching_packed<ushort2, uint16_t> { typedef ushort2 type; };
 
-template<> struct matching_packed<float162, bool> { typedef bool2 type; };
-template<> struct matching_packed<float162, float16> { typedef float162 type; };
+template<> struct matching_packed<half2, bool> { typedef bool2 type; };
+template<> struct matching_packed<half2, half> { typedef half2 type; };
+template<> struct matching_packed<half2, bfloat16> { typedef bfloat162 type; };
 
 template<> struct matching_packed<bfloat162, bool> { typedef bool2 type; };
 template<> struct matching_packed<bfloat162, bfloat16> { typedef bfloat162 type; };
+template<> struct matching_packed<bfloat162, float16> { typedef float162 type; };
 
 //--------------------------------------
 // given an input type A and an output type O, if the input is
@@ -233,15 +243,35 @@ template<> struct packing<short2> { static const int count = 2; };
 template<> struct packing<const short2> { static const int count = 2; };
 template<> struct packing<ushort2> { static const int count = 2; };
 template<> struct packing<const ushort2> { static const int count = 2; };
-template<> struct packing<float162> { static const int count = 2; };
-template<> struct packing<const float162> { static const int count = 2; };
+template<> struct packing<half2> { static const int count = 2; };
+template<> struct packing<const half2> { static const int count = 2; };
 template<> struct packing<bfloat162> { static const int count = 2; };
 template<> struct packing<const bfloat162> { static const int count = 2; };
 
-//==========================================================================
-// Convenience types
-//==========================================================================
+template<typename A, typename O>
+inline constexpr bool canPack() {
+    return packing<typename packed<A>::type>::count == 
+        packing<typename matching_packed<A,O>::type>::count;
+}
 
-typedef Complex<float> complexf;
-typedef Complex<float16> complexf16;
-typedef Complex<bfloat16> complexbf16;
+
+//==============================================================================
+/// init
+/// fill all lanes
+template<typename T>
+__HOSTDEVICE_INLINE__ T init(float v) {
+    T t;
+    if constexpr (packing<T>::count == 1) {
+        t = T(v);
+    } else if constexpr (packing<T>::count == 2) {
+        t.x = v;
+        t.y = v;
+    } else if constexpr (packing<T>::count == 4) {
+        t.x = v;
+        t.y = v;
+        t.z = v;
+        t.w = v;
+    }
+    return t;
+}
+

@@ -18,7 +18,6 @@
 #include <cuda_runtime.h>
 #include <cublasLt.h>
 
-
 // make visible to Swift as C API
 #ifdef __cplusplus
 extern "C" {
@@ -67,6 +66,7 @@ typedef enum {
 
 //==============================================================================
 //  srtTensorDescriptor
+// make visible to Swift as C API
 typedef struct {
     /// the TensorElement cuda data type
     srtDataType type;
@@ -86,7 +86,7 @@ typedef struct {
     const size_t* logicalStrides;
 } srtTensorDescriptor;
 
-//==============================================================================
 #ifdef __cplusplus
 }
 #endif
+

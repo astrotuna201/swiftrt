@@ -13,86 +13,75 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include "fill_c.h"
-#include "srt_types.h"
-#include "index.h"
+#include "fill_api.h"
+#include "tensor.cuh"
+#include "srt_traits.h"
+#include "iterators.cuh"
+#include "tensor_api.h"
 
 //==============================================================================
 // Swift importable C interface functions
 //==============================================================================
 
 //==============================================================================
-// srtCopy
-cudaError_t srtCopy(
-    const void* x, const srtTensorDescriptor* xDesc,
-    void* out, const srtTensorDescriptor* oDesc,
-    cudaStream_t stream
-) {
-    return cudaErrorNotSupported;
-}
-
-//==============================================================================
 // srtFill
 
 // kernel
-template <typename O, typename IndexO>
-__global__ void mapElementFill(O *out, IndexO indexO, O element) {
-    auto position = IndexO::Logical(blockIdx, blockDim, threadIdx);
-    if (indexO.isInBounds(position)) {
-        int i = indexO.linear(position);
-        out[i] = element;
-    }
+template <typename IterOut, typename E>
+__global__ void mapFillWithElement(IterOut iterOut, E element) {
+    auto p = typename IterOut::Logical(blockIdx, blockDim, threadIdx);
+    if (iterOut.isInBounds(p)) iterOut[p] = element;
 }
 
 template <typename O>
-static cudaError_t elementFill(
-    void *pOut, const TensorDescriptor &oDesc,
+static cudaError_t fillWithElement(
+    void *pOut,
     const void *pElement,
+    size_t count,
     cudaStream_t stream
 ) {
     typedef typename packed<O>::type Out;
     Out *out = static_cast<Out*>(pOut);
     Out element = packed<O>::value(*static_cast<const O*>(pElement));
-    int count = divideRoundingUp(oDesc.count, packing<Out>::count);
 
-    dim3 tile = tileSize(count);
-    dim3 grid = gridSize<1>(oDesc, tile);
+    auto iterO = Flat(out, count);
 
-    mapElementFill<Out, Flat><<<grid, tile, 0, stream>>>(out, Flat(oDesc), element);
+    // get tile and grid size for launch
+    dim3 tile = tileSize(iterO.count);
+    dim3 grid = gridSize(iterO.count, tile);
+
+    mapFillWithElement<<<grid, tile, 0, stream>>>(iterO, element);
     return cudaSuccess;
 }
 
 //------------------------------------------------------------------------------
-/// srtFill
+/// srtFillFlat
 /// Fills the output buffer with the element value
 ///
 /// - Parameters:
-///  - out: pointer to device memory output buffer
-///  - poDesc: pointer to output srtTensorDescriptor
+///  - type: the data type
+///  - out: pointer to output buffer
 ///  - element: pointer to element fill value in host memory
+///  - count: the number of elements to fill
 ///  - stream: the execution stream
-cudaError_t srtFill(
-    void* out, const srtTensorDescriptor* poDesc,
+cudaError_t srtFillFlat(
+    srtDataType type,
+    void* out,
     const void* element,
+    size_t count,
     cudaStream_t stream
 ) {
-    const TensorDescriptor& oDesc = static_cast<const TensorDescriptor&>(*poDesc);
-    assert(oDesc.isDense());
-
-    // The output type is converted to a packed type if possible for a faster
-    // fill operation. The output buffer space is guaranteed to be rounded
-    // up to a multiple of the largest packed type so we don't have to worry
-    // about writing out of bounds.
-    switch(oDesc.type) {
-        case real32F:  return elementFill<float>(out, oDesc, element, stream);
-        case real64F:  return elementFill<double>(out, oDesc, element, stream);
-        case real16F:  return elementFill<float16>(out, oDesc, element, stream);
-        case real16BF: return elementFill<bfloat16>(out, oDesc, element, stream);
-        case real16I:  return elementFill<int16_t>(out, oDesc, element, stream);
-        case real16U:  return elementFill<uint16_t>(out, oDesc, element, stream);
-        case real8I:   return elementFill<int8_t>(out, oDesc, element, stream);
-        case real8U:   return elementFill<uint8_t>(out, oDesc, element, stream);
-        case complex32F: return elementFill<Complex<float> >(out, oDesc, element, stream);
+    switch(type) {
+        case real32F:  return fillWithElement<float>(out, element, count, stream);
+        case real64F:  return fillWithElement<double>(out, element, count, stream);
+        case real16F:  return fillWithElement<float16>(out, element, count, stream);
+        case real16BF: return fillWithElement<bfloat16>(out, element, count, stream);
+        case real16I:  return fillWithElement<int16_t>(out, element, count, stream);
+        case real16U:  return fillWithElement<uint16_t>(out, element, count, stream);
+        case real8I:   return fillWithElement<int8_t>(out, element, count, stream);
+        case real8U:   return fillWithElement<uint8_t>(out, element, count, stream);
+        case complex16F: return fillWithElement<Complex<float16> >(out, element, count, stream);
+        case complex32F: return fillWithElement<Complex<float> >(out, element, count, stream);
         default: return cudaErrorNotSupported;
     }
 }
@@ -102,50 +91,78 @@ cudaError_t srtFill(
 
 // kernel
 // TODO: remove float cast. It currently is to get around missing bfloat cast
-template <typename E, typename IndexO>
+template <typename IterOut, typename E>
 __global__ void mapFillRange(
-    E *out, IndexO indexO,
+    IterOut iterOut,
     const E first,
     const E last,
     const E step
 ) {
-    auto lastIndex = indexO.count - 1;
-    auto position = IndexO::Logical(blockIdx, blockDim, threadIdx);
-    if (indexO.isInBounds(position)) {
-        auto i = indexO.linear(position);
-        auto seq = indexO.sequence(position);
-        E value = first + (E(float(seq)) * step);
-        out[i] = i == lastIndex ? last : value; 
+    auto lastPos = iterOut.count - 1;
+    auto p = typename IterOut::Logical(blockIdx, blockDim, threadIdx);
+    if (iterOut.isInBounds(p)) {
+        auto seqPos = iterOut.sequence(p);
+        E value = first + (E(float(seqPos)) * step);
+        iterOut[p] = seqPos == lastPos ? last : value; 
     }
 }
 
-template <typename E, typename IndexO>
+template <typename E>
 static cudaError_t fillRange(
-    void *pOut, const TensorDescriptor &oDesc,
-    const E first,
-    const E last,
-    const E step,
+    void *pOut,
+    const void* pfirst,
+    const void* plast,
+    const void* pstep,
+    const uint32_t count,
     cudaStream_t stream
 ) {
     E *out = static_cast<E *>(pOut);
-    dim3 tile = tileSize<IndexO::Rank>(oDesc);
-    dim3 grid = gridSize<IndexO::Rank>(oDesc, tile);
-    mapFillRange<E,IndexO><<<grid, tile, 0, stream>>>(out, IndexO(oDesc), first, last, step);
-    cudaStreamSynchronize(stream);
+    auto iterO = Flat(out, count);
+    E first = *static_cast<const E*>(pfirst);
+    E last  = *static_cast<const E*>(plast);
+    E step  = *static_cast<const E*>(pstep);
+
+    // get tile and grid size for launch
+    dim3 tile = tileSize(count);
+    dim3 grid = gridSize(count, tile);
+
+    mapFillRange<<<grid, tile, 0, stream>>>(iterO, first, last, step);
+    return cudaSuccess;
+}
+
+template <template<typename P, int R> class IterO, int Rank, typename E>
+static cudaError_t fillRange(
+    void *pOut, const TensorDescriptor &oDesc,
+    const void* pfirst,
+    const void* plast,
+    const void* pstep,
+    cudaStream_t stream
+) {
+    E *out = static_cast<E *>(pOut);
+    auto iterO = IterO<E*, Rank>(out, oDesc);
+    E first = *static_cast<const E*>(pfirst);
+    E last  = *static_cast<const E*>(plast);
+    E step  = *static_cast<const E*>(pstep);
+
+    // get tile and grid size for launch
+    dim3 tile = tileSize<Rank>(iterO.shape);
+    dim3 grid = gridSize<Rank>(iterO.shape, tile);
+
+    mapFillRange<<<grid, tile, 0, stream>>>(iterO, first, last, step);
     return cudaSuccess;
 }
 
 template <typename E, int R>
 static cudaError_t selectFillRangeIndex(
     void *out, const TensorDescriptor &oDesc,
-    const E first,
-    const E last,
-    const E step,
+    const void* first,
+    const void* last,
+    const void* step,
     cudaStream_t stream
 ) {
     switch (oDesc.order) {
-    case CUBLASLT_ORDER_ROW: return fillRange<E,Flat>(out, oDesc, first, last, step, stream);
-    case CUBLASLT_ORDER_COL: return fillRange<E,StridedSeq<R> >(out, oDesc, first, last, step, stream);
+    case CUBLASLT_ORDER_ROW: return fillRange<E>(out, first, last, step, oDesc.count, stream);
+    case CUBLASLT_ORDER_COL: return fillRange<StridedSeq,R,E>(out, oDesc, first, last, step, stream);
     default: return cudaErrorNotSupported;
     }
 }
@@ -153,15 +170,11 @@ static cudaError_t selectFillRangeIndex(
 template <typename E>
 static cudaError_t selectFillRangeRank(
     void *out, const TensorDescriptor &oDesc,
-    const void* pfirst,
-    const void* plast,
-    const void* pstep,
+    const void* first,
+    const void* last,
+    const void* step,
     cudaStream_t stream
 ) {
-    E first = *static_cast<const E*>(pfirst);
-    E last  = *static_cast<const E*>(plast);
-    E step  = *static_cast<const E*>(pstep);
-
     switch (oDesc.rank) {
     case 1: return selectFillRangeIndex<E,1>(out, oDesc, first, last, step, stream);
     case 2: return selectFillRangeIndex<E,2>(out, oDesc, first, last, step, stream);
@@ -170,6 +183,41 @@ static cudaError_t selectFillRangeRank(
     }
 }
 
+//------------------------------------------------------------------------------
+/// srtFillRangeFlat
+/// Fills the output with logical position indexes  
+cudaError_t srtFillRangeFlat(
+    srtDataType type,
+    void* out,
+    const void* first,
+    const void* last,
+    const void* step,
+    size_t count,
+    cudaStream_t stream
+) {
+    switch (type) {
+    case real32F:  return fillRange<float>(out, first, last, step, count, stream);
+    case real64F:  return fillRange<double>(out, first, last, step, count, stream);
+    case real32I:  return fillRange<int32_t>(out, first, last, step, count, stream);
+
+    // can't pack these types because the range is generated sequentially
+    case real16F:  return fillRange<float16>(out, first, last, step, count, stream);
+    case real16BF: return fillRange<bfloat16>(out, first, last, step, count, stream);
+    case real32U:  return fillRange<uint32_t>(out, first, last, step, count, stream);
+    case real16I:  return fillRange<int16_t>(out, first, last, step, count, stream);
+    case real16U:  return fillRange<uint16_t>(out, first, last, step, count, stream);
+    case real8I:   return fillRange<int8_t>(out, first, last, step, count, stream);
+    case real8U:   return fillRange<uint8_t>(out, first, last, step, count, stream);
+
+    case complex16F: return fillRange<Complex<float16> >(out, first, last, step, count, stream);
+    case complex16BF: return fillRange<Complex<bfloat16> >(out, first, last, step, count, stream);
+    case complex32F: return fillRange<Complex<float> >(out, first, last, step, count, stream);
+    default: return cudaErrorNotSupported;
+    }
+    return cudaErrorNotSupported;
+}
+
+//------------------------------------------------------------------------------
 /// srtFillRange
 /// Fills the output with logical position indexes  
 cudaError_t srtFillRange(
@@ -193,6 +241,7 @@ cudaError_t srtFillRange(
     case real16U:  return selectFillRangeRank<uint16_t>(out, oDesc, first, last, step, stream);
     case real8I:   return selectFillRangeRank<int8_t>(out, oDesc, first, last, step, stream);
     case real8U:   return selectFillRangeRank<uint8_t>(out, oDesc, first, last, step, stream);
+    case complex16F: return selectFillRangeRank<Complex<float16> >(out, oDesc, first, last, step, stream);
     case complex32F: return selectFillRangeRank<Complex<float> >(out, oDesc, first, last, step, stream);
     default: return cudaErrorNotSupported;
     }

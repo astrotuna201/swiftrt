@@ -10,3 +10,6 @@
 xcuserdata/
 culprits.txt
 Package.resolved
+.*.sw?
+.cache
+

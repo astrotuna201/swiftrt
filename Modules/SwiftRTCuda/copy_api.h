@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 #pragma once
-#include "srt_cdefs.h"
+#include "tensor_api.h"
 
 
 // make visible to Swift as C API
@@ -24,12 +24,17 @@ extern "C" {
 
 //==============================================================================
 
-cudaError_t srtJulia(
-    const void* z, const srtTensorDescriptor* pzDesc,
-    void* divergence, const srtTensorDescriptor* pdDesc,
-    const void* tolerance,
-    const void* C,
-    size_t iterations,
+cudaError_t srtCopy(
+    const void* a, const srtTensorDescriptor* aDesc,
+    void* out, const srtTensorDescriptor* oDesc,
+    cudaStream_t stream);
+
+cudaError_t srtCopyFlat(
+    srtDataType atype,
+    const void* a,
+    srtDataType otype,
+    void* out,
+    size_t count,
     cudaStream_t stream);
 
 //==============================================================================

@@ -20,25 +20,20 @@
 
 #include <cmath>
 #include <optional>
-#include <limits>
 #include <type_traits>
 
-/* Set up function decorations */
-#ifndef __CUDA_HOSTDEVICE__
-#if defined(__CUDACC__)
-#define __CUDA_HOSTDEVICE__ __host__ __device__
-#else /* !defined(__CUDACC__) */
-#define __CUDA_HOSTDEVICE__
-#endif /* defined(__CUDACC_) */
-#endif
+#include "cuda_macros.cuh"
+#include "srt_limits.cuh"
 
 //******************************************************************************
 // This is the Complex module from Swift Numerics ported to C++
 //
 //******************************************************************************
 
-template<typename RealType>
+template<typename _RealType>
 struct Complex {
+    typedef _RealType RealType;
+    
     //  A note on the `x` and `y` properties
     //
     //  `x` and `y` are the names we use for the raw storage of the real and
@@ -54,26 +49,31 @@ struct Complex {
 
     //--------------------------------------------------------------------------
     /// A complex number constructed by specifying the real and imaginary parts.
-    __CUDA_HOSTDEVICE__ inline Complex(RealType real, RealType imaginary) {
+    __HOSTDEVICE_INLINE__ Complex(RealType real, RealType imaginary) {
         x = real;
         y = imaginary;
     }
 
-    __CUDA_HOSTDEVICE__ inline Complex(RealType real) {
+    __HOSTDEVICE_INLINE__ Complex(RealType real) {
         x = real;
-        y = 0;
+        y = RealType();
     }
 
-    __CUDA_HOSTDEVICE__ inline Complex() {
-        x = 0;
-        y = 0;
+    __HOSTDEVICE_INLINE__ Complex(int v) {
+        x = RealType(float(v));
+        y = RealType();
+    }
+
+    __HOSTDEVICE_INLINE__ Complex() {
+        x = RealType();
+        y = RealType();
     }
 
     //==========================================================================
     // basic properties
     //==========================================================================
-    __CUDA_HOSTDEVICE__ inline static bool isNormal(RealType x) {
-        return x != 0 && 
+    __HOSTDEVICE_INLINE__ static bool isNormal(RealType x) {
+        return x != RealType() && 
             x >= std::numeric_limits<RealType>::min() &&
             x <= std::numeric_limits<RealType>::max();
     }
@@ -81,14 +81,14 @@ struct Complex {
     /// The real part of this complex value.
     ///
     /// If `z` is not finite, `z.real` is `.nan`.
-    __CUDA_HOSTDEVICE__ inline RealType real() { return isFinite() ? x : NAN; }
-    __CUDA_HOSTDEVICE__ inline RealType real(RealType newValue) { x = newValue; }
+    __HOSTDEVICE_INLINE__ RealType real() { return isFinite() ? x : NAN; }
+    __HOSTDEVICE_INLINE__ RealType real(RealType newValue) { x = newValue; }
 
     /// The imaginary part of this complex value.
     ///
     /// If `z` is not finite, `z.imaginary` is `.nan`.
-    __CUDA_HOSTDEVICE__ inline RealType imaginary() { return isFinite() ? y : NAN; }
-    __CUDA_HOSTDEVICE__ inline RealType imaginary(RealType newValue) { y = newValue; }
+    __HOSTDEVICE_INLINE__ RealType imaginary() { return isFinite() ? y : NAN; }
+    __HOSTDEVICE_INLINE__ RealType imaginary(RealType newValue) { y = newValue; }
 
     /// The additive identity, with real and imaginary parts both zero.
     ///
@@ -97,7 +97,7 @@ struct Complex {
     /// - .one
     /// - .i
     /// - .infinity
-    __CUDA_HOSTDEVICE__ inline static Complex zero() { return Complex(0, 0); }
+    __HOSTDEVICE_INLINE__ static Complex zero() { return Complex(); }
 
     /// The multiplicative identity, with real part one and imaginary part zero.
     ///
@@ -106,7 +106,7 @@ struct Complex {
     /// - .zero
     /// - .i
     /// - .infinity
-    __CUDA_HOSTDEVICE__ inline static Complex one() { return Complex(1, 0); }
+    __HOSTDEVICE_INLINE__ static Complex one() { return Complex(1); }
 
     /// The imaginary unit.
     ///
@@ -115,7 +115,7 @@ struct Complex {
     /// - .zero
     /// - .one
     /// - .infinity
-    __CUDA_HOSTDEVICE__ inline static Complex i() { return Complex(0, 1); }
+    __HOSTDEVICE_INLINE__ static Complex i() { return Complex(RealType(), RealType(1.0f)); }
 
     /// The point at infinity.
     ///
@@ -124,10 +124,12 @@ struct Complex {
     /// - .zero
     /// - .one
     /// - .i
-    __CUDA_HOSTDEVICE__ inline static Complex infinity() { return Complex(INFINITY, 0); }
+    __HOSTDEVICE_INLINE__ static Complex infinity() {
+        return Complex(std::numeric_limits<RealType>::infinity(), RealType());
+    }
 
     /// The complex conjugate of this value.
-    __CUDA_HOSTDEVICE__ inline Complex conjugate() { return Complex(x, -y); }
+    __HOSTDEVICE_INLINE__ Complex conjugate() { return Complex(x, -y); }
 
     /// True if this value is finite.
     ///
@@ -138,7 +140,7 @@ struct Complex {
     /// - `.isNormal`
     /// - `.isSubnormal`
     /// - `.isZero`
-    __CUDA_HOSTDEVICE__ inline bool isFinite() const {
+    __HOSTDEVICE_INLINE__ bool isFinite() const {
         return isfinite(x) && isfinite(y);
     }
 
@@ -153,7 +155,7 @@ struct Complex {
     /// - `.isFinite`
     /// - `.isSubnormal`
     /// - `.isZero`
-    __CUDA_HOSTDEVICE__ inline bool isNormal() {
+    __HOSTDEVICE_INLINE__ bool isNormal() {
         return isFinite() && (isNormal(x) || isNormal(y));
     }
 
@@ -167,7 +169,7 @@ struct Complex {
     /// - `.isFinite`
     /// - `.isNormal`
     /// - `.isZero`
-    __CUDA_HOSTDEVICE__ inline bool isSubnormal() { return isFinite() && !isNormal() && !isZero(); }
+    __HOSTDEVICE_INLINE__ bool isSubnormal() { return isFinite() && !isNormal() && !isZero(); }
 
     /// True if this value is zero.
     ///
@@ -178,7 +180,7 @@ struct Complex {
     /// - `.isFinite`
     /// - `.isNormal`
     /// - `.isSubnormal`
-    __CUDA_HOSTDEVICE__ inline bool isZero() { return x == 0 && y == 0; }
+    __HOSTDEVICE_INLINE__ bool isZero() { return x == RealType(0.0f) && y == RealType(0.0f); }
 
     /// The ∞-norm of the value (`max(abs(real), abs(imaginary))`).
     ///
@@ -195,7 +197,7 @@ struct Complex {
     /// -
     /// - `.length`
     /// - `.lengthSquared`
-    __CUDA_HOSTDEVICE__ inline RealType magnitude() {
+    __HOSTDEVICE_INLINE__ RealType magnitude() {
         if (isFinite()) {
             return max(abs(x), abs(y));
         } else {
@@ -218,7 +220,7 @@ struct Complex {
     /// before passing across language boundaries, but it may also be useful
     /// for some serialization tasks. It's also a useful implementation detail for
     /// some primitive operations.
-    __CUDA_HOSTDEVICE__ inline Complex canonicalized() {
+    __HOSTDEVICE_INLINE__ Complex canonicalized() {
         if (isZero()) {
             return zero();
         } else if (isFinite()) {
@@ -265,7 +267,7 @@ struct Complex {
     /// - `.phase`
     /// - `.polar`
     /// - `init(r:θ:)`
-    __CUDA_HOSTDEVICE__ inline RealType length() {
+    __HOSTDEVICE_INLINE__ RealType length() {
         auto naive = lengthSquared();
         if (naive.isNormal()) {
             return sqrt(naive);
@@ -278,7 +280,7 @@ struct Complex {
     //  of the inline function. Note that even `carefulLength` can overflow
     //  for finite inputs, but only when the result is outside the range
     //  of representable values.
-    __CUDA_HOSTDEVICE__ inline RealType carefulLength() {
+    __HOSTDEVICE_INLINE__ RealType carefulLength() {
         if (isFinite()) {
             return hypot(x, y);
         } else {
@@ -301,7 +303,7 @@ struct Complex {
     /// -
     /// - `.length`
     /// - `.magnitude`
-    __CUDA_HOSTDEVICE__ inline RealType lengthSquared() {
+    __HOSTDEVICE_INLINE__ RealType lengthSquared() {
         return x*x + y*y;
     }
     
@@ -320,7 +322,7 @@ struct Complex {
     /// - `.length`
     /// - `.polar`
     /// - `init(r:θ:)`
-    __CUDA_HOSTDEVICE__ inline RealType phase() {
+    __HOSTDEVICE_INLINE__ RealType phase() {
         if (isFinite() && !isZero()) {
             return atan2(y, x);
         }  else {
@@ -343,13 +345,13 @@ struct Complex {
     struct Polar {
         RealType length;
         RealType phase;
-        __CUDA_HOSTDEVICE__ inline Polar(RealType l, RealType p) {
+        __HOSTDEVICE_INLINE__ Polar(RealType l, RealType p) {
             length = l;
             phase = p;
         }
     };
 
-    __CUDA_HOSTDEVICE__ inline Polar polar() {
+    __HOSTDEVICE_INLINE__ Polar polar() {
         return Polar(length(), phase());
     }
     
@@ -376,7 +378,7 @@ struct Complex {
     /// - `.length`
     /// - `.phase`
     /// - `.polar`
-    __CUDA_HOSTDEVICE__ inline Complex(Polar polar) {
+    __HOSTDEVICE_INLINE__ Complex(Polar polar) {
         if (polar.phase.isFinite()) {
             *this = Complex(cos(polar.phase), sin(polar.phase)).multipliedBy(polar.length);
         } else {
@@ -390,23 +392,23 @@ struct Complex {
     // AdditiveArithmetic
     //==========================================================================
 
-    __CUDA_HOSTDEVICE__ inline Complex operator+(Complex w) const {
+    __HOSTDEVICE_INLINE__ Complex operator+(Complex w) const {
         return Complex(x + w.x, y + w.y);
     }
     
-    __CUDA_HOSTDEVICE__ inline Complex operator-(Complex w) const {
+    __HOSTDEVICE_INLINE__ Complex operator-(Complex w) const {
         return Complex(x - w.x, y - w.y);
     }
     
-    __CUDA_HOSTDEVICE__ inline Complex operator-() const {
+    __HOSTDEVICE_INLINE__ Complex operator-() const {
         return Complex(-x, -y);
     }
 
-    __CUDA_HOSTDEVICE__ inline void operator+=(Complex w) {
+    __HOSTDEVICE_INLINE__ void operator+=(Complex w) {
         *this = *this + w;
     }
     
-    __CUDA_HOSTDEVICE__ inline void operator-=(Complex w) {
+    __HOSTDEVICE_INLINE__ void operator-=(Complex w) {
         *this = *this - w;
     }
 
@@ -429,20 +431,20 @@ struct Complex {
     // TODO: figure out if there's some way to avoid these surprising results
     // and turn these into operators if/when we have it.
     // (https://github.com/apple/swift-numerics/issues/12)
-    __CUDA_HOSTDEVICE__ inline Complex multipliedBy(RealType a) const {
+    __HOSTDEVICE_INLINE__ Complex multipliedBy(RealType a) const {
         return Complex(x*a, y*a);
     }
 
-    __CUDA_HOSTDEVICE__ inline Complex dividedBy(RealType a) const {
+    __HOSTDEVICE_INLINE__ Complex dividedBy(RealType a) const {
         return Complex(x/a, y/a);
     }
 
-    __CUDA_HOSTDEVICE__ inline Complex operator*(Complex w) const {
+    __HOSTDEVICE_INLINE__ Complex operator*(Complex w) const {
         return Complex(x*w.x - y*w.y, x*w.y + y*w.x);
     }
     
     
-    __CUDA_HOSTDEVICE__ inline Complex operator/(Complex w) const {
+    __HOSTDEVICE_INLINE__ Complex operator/(Complex w) const {
         // Try the naive expression z/w = z*conj(w) / |w|^2; if we can compute
         // this without over/underflow, everything is fine and the result is
         // correct. If not, we have to rescale and do the computation carefully.
@@ -454,15 +456,15 @@ struct Complex {
         }
     }
 
-    __CUDA_HOSTDEVICE__ inline void operator*=(Complex w) {
+    __HOSTDEVICE_INLINE__ void operator*=(Complex w) {
         *this = *this * w;
     }
 
-    __CUDA_HOSTDEVICE__ inline void operator/=(Complex w)  {
+    __HOSTDEVICE_INLINE__ void operator/=(Complex w)  {
         *this = *this / w;
     }
 
-    __CUDA_HOSTDEVICE__ static Complex rescaledDivide(Complex z, Complex w) {
+    __HOSTDEVICE_INLINE__ static Complex rescaledDivide(Complex z, Complex w) {
         if (w.isZero()) return infinity();
         if (z.isZero() || !w.isFinite()) return zero();
         // TODO: detect when RealType is Float and just promote to Double, then
@@ -499,7 +501,7 @@ struct Complex {
     ///
     /// If such a value cannot be produced (because the phase of zero and infinity is undefined),
     /// `nil` is returned.
-    __CUDA_HOSTDEVICE__ inline std::optional<Complex> normalized() {
+    __HOSTDEVICE_INLINE__ std::optional<Complex> normalized() {
         if (length().isNormal()) {
             return this->dividedBy(length());
         }
@@ -526,7 +528,7 @@ struct Complex {
     ///   return data.map { $0 / divisor }
     /// }
     /// ```
-    __CUDA_HOSTDEVICE__ inline std::optional<Complex> reciprocal() {
+    __HOSTDEVICE_INLINE__ std::optional<Complex> reciprocal() {
         auto recip = 1/(*this);
         if (recip.isNormal() || isZero() || !isFinite()) {
             return recip;
@@ -536,6 +538,13 @@ struct Complex {
 };
 
 //==========================================================================
+// convenience types
+typedef Complex<float> complexf;
+typedef Complex<float16> complexf16;
+typedef Complex<bfloat16> complexbf16;
+typedef Complex<double> complexd;
+
+//==========================================================================
 // Equatable
 //==========================================================================
 
@@ -543,7 +552,7 @@ struct Complex {
 // we identify all NaNs and infinites as the point at infinity on the Riemann
 // sphere).
 template<typename T>
-__CUDA_HOSTDEVICE__ inline bool operator==(const Complex<T>& a, const Complex<T>& b) {
+__HOSTDEVICE_INLINE__ bool operator==(const Complex<T>& a, const Complex<T>& b) {
     // Identify all numbers with either component non-finite as a single
     // "point at infinity".
     if (!(a.isFinite() || b.isFinite())) return true;
@@ -555,7 +564,7 @@ __CUDA_HOSTDEVICE__ inline bool operator==(const Complex<T>& a, const Complex<T>
 }
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline bool operator!=(const Complex<T>& a, const Complex<T>& b) {
+__HOSTDEVICE_INLINE__ bool operator!=(const Complex<T>& a, const Complex<T>& b) {
     return !(a == b);
 }
 
@@ -565,22 +574,22 @@ __CUDA_HOSTDEVICE__ inline bool operator!=(const Complex<T>& a, const Complex<T>
 //==========================================================================
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline bool operator<(const Complex<T>& a, const Complex<T>& b) {
+__HOSTDEVICE_INLINE__ bool operator<(const Complex<T>& a, const Complex<T>& b) {
     return a.x == b.x ? a.y < b.y : a.x < b.x; 
 }
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline bool operator<=(const Complex<T>& a, const Complex<T>& b) {
+__HOSTDEVICE_INLINE__ bool operator<=(const Complex<T>& a, const Complex<T>& b) {
     return a < b || a == b;
 }
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline bool operator>(const Complex<T>& a, const Complex<T>& b) {
+__HOSTDEVICE_INLINE__ bool operator>(const Complex<T>& a, const Complex<T>& b) {
     return a.x == b.x ? a.y > b.y : a.x > b.x; 
 }
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline bool operator>=(const Complex<T>& a, const Complex<T>& b) {
+__HOSTDEVICE_INLINE__ bool operator>=(const Complex<T>& a, const Complex<T>& b) {
     return a > b || a == b;
 }
 
@@ -589,16 +598,20 @@ __CUDA_HOSTDEVICE__ inline bool operator>=(const Complex<T>& a, const Complex<T>
 //==========================================================================
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline T abs(const Complex<T>& a) {
-    return sqrt(a.x * a.x + a.y * a.y);
-}
-
-template<typename T>
-__CUDA_HOSTDEVICE__ inline T abs2(const Complex<T>& a) {
+__HOSTDEVICE_INLINE__ T abs2(const Complex<T>& a) {
     return a.x * a.x + a.y * a.y;
 }
 
 template<typename T>
-__CUDA_HOSTDEVICE__ inline Complex<T> neg(const Complex<T>& a) {
+__HOSTDEVICE_INLINE__ T abs(const Complex<T>& a) {
+    return sqrt(abs2(a));
+}
+
+template<typename T>
+__HOSTDEVICE_INLINE__ Complex<T> neg(const Complex<T>& a) {
+    if constexpr (std::is_same_v<T,half>) {
+        auto negt2 = -reinterpret_cast<const float162&>(a);
+        return Complex<T>(negt2.x, negt2.y);
+    }
     return Complex<T>(-a.x, -a.y);
 }

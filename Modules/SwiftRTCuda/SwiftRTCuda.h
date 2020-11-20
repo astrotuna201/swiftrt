@@ -14,8 +14,13 @@
 // limitations under the License.
 //
 #pragma once
-#include <cublasLt.h>
-#include <cuda_runtime.h>
-#include <cudnn.h>
-#include <curand.h>
-#include "srt_cuda_api.h"
+
+// this is an umbrella header
+#include "compare_api.h"
+#include "copy_api.h"
+#include "fill_api.h"
+#include "math_api.h"
+#include "memory_api.h"
+#include "reduce_api.h"
+#include "specialized_api.h"
+#include "utilities_api.h"

@@ -13,18 +13,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include "math_fn.h"
+#include "math_fn.cuh"
 #include "op1.h"
 #include "op2.h"
 #include "op3.h"
-#include "srt_types.h"
 
 //==============================================================================
 // Swift importable C interface functions
 //==============================================================================
 
 //------------------------------------------------------------------------------
-Op1(Abs, abs, (isNumeric<A>() && (isSame<A,Out>() || isComplex<A>())))
+Op1(Abs, abs, isSignedNumeric<A>())
+Op1_TO(Abs_TO, abs, ((isSignedNumeric<A>() && isSame<A,Out>()) || isComplexRealType<A,Out>()))
 
 cudaError_t srtAbs(
     const void* a, const srtTensorDescriptor* paDesc,
@@ -32,13 +32,62 @@ cudaError_t srtAbs(
     cudaStream_t stream
 ) {
     Cast2TensorDescriptorsA(paDesc, poDesc)
-    return selectT_O<Abs>(a, aDesc, out, oDesc, stream);
+    if (aDesc.type == oDesc.type) {
+        return select<Abs>(a, aDesc, out, oDesc, stream);
+    } else {
+        return select<Abs_TO>(a, aDesc, out, oDesc, stream);
+    }
+}
+
+cudaError_t srtAbsFlat(
+    srtDataType atype,
+    const void* a,
+    srtDataType otype,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+) {
+    if (atype == otype) {
+        return select<Abs>(atype, a, out, count, stream);
+    } else {
+        return select<Abs_TO>(atype, a, otype, out, count, stream);
+    }
+}
+
+//------------------------------------------------------------------------------
+Op1_TO(Abs2_TO, abs2, (isComplexRealType<A,Out>()))
+
+cudaError_t srtAbs2Flat(
+    srtDataType atype,
+    const void* a,
+    srtDataType otype,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+) {
+    return select<Abs2_TO>(atype, a, otype, out, count, stream);
+}
+
+cudaError_t srtAbs2(
+    const void* a, const srtTensorDescriptor* paDesc,
+    void* out, const srtTensorDescriptor* poDesc,
+    cudaStream_t stream
+) {
+    Cast2TensorDescriptorsA(paDesc, poDesc)
+    return select<Abs2_TO>(a, aDesc, out, oDesc, stream);
 }
 
 //------------------------------------------------------------------------------
 Op1(Acos, acos, isFloating<A>())
 
-// Must be promoted types
+cudaError_t srtAcosFlat(
+    const void* a, srtDataType atype,
+    void* out,
+    size_t count, cudaStream_t stream
+) {
+    return select<Acos>(atype, a, out, count, stream);
+}
+
 cudaError_t srtAcos(
     const void* a, const srtTensorDescriptor* paDesc,
     void* out, const srtTensorDescriptor* poDesc,
@@ -50,6 +99,14 @@ cudaError_t srtAcos(
 
 //------------------------------------------------------------------------------
 Op1(Acosh, acosh, isFloating<A>())
+
+cudaError_t srtAcoshFlat(
+    const void* a, srtDataType atype,
+    void* out,
+    size_t count, cudaStream_t stream
+) {
+    return select<Acosh>(atype, a, out, count, stream);
+}
 
 cudaError_t srtAcosh(
     const void* a, const srtTensorDescriptor* paDesc,
@@ -73,6 +130,17 @@ cudaError_t srtAdd(
     return select<Add>(a, aDesc, b, bDesc, out, oDesc, stream);
 }
 
+cudaError_t srtAddFlat(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    void* out,
+    size_t count, 
+    cudaStream_t stream
+) {
+    return select<Add>(type, a, b, type, out, count, stream);
+}
+
 //------------------------------------------------------------------------------
 cudaError_t srtAddTE(
     const void* a, const srtTensorDescriptor* paDesc,
@@ -82,6 +150,15 @@ cudaError_t srtAddTE(
 ) {
     Cast2TensorDescriptorsA(paDesc, poDesc)
     return select<Add>(a, aDesc, element, out, oDesc, stream);
+}
+
+cudaError_t srtAddTEFlat(
+    const void* a, srtDataType atype,
+    const void* b,
+    void* out,
+    size_t count, cudaStream_t stream
+) {
+    return cudaErrorNotSupported;
 }
 
 //------------------------------------------------------------------------------
@@ -194,7 +271,7 @@ cudaError_t srtDivTE(
 }
 
 // `true` swaps `a` and `element` when calling `divide`
-Op2SwapAB(DivET, divide, isNumeric<A>())
+Op2SwapAB(DivET, divide, (isNumeric<A>() && isSame<A,Out>()))
 
 cudaError_t srtDivET(
     const void* element,
@@ -387,7 +464,7 @@ cudaError_t srtMulTE(
 }
 
 //------------------------------------------------------------------------------
-Op3(MultiplyAdd, multiplyAdd, isNumeric<A>())
+Op3(MultiplyAdd, multiplyAdd, (isNumeric<A>() && isSame<A,Out>()))
 
 cudaError_t srtMultiplyAdd(
     const void* a, const srtTensorDescriptor* paDesc,
@@ -400,7 +477,22 @@ cudaError_t srtMultiplyAdd(
     return select<MultiplyAdd>(a, aDesc, b, bDesc, c, cDesc, out, oDesc, stream);
 }
 
-Op3SwapBC(MultiplyAddE, multiplyAdd, isNumeric<A>())
+Op3Same(MultiplyAddFlat, multiplyAdd, isNumeric<A>())
+
+cudaError_t srtMultiplyAddFlat(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    const void* c,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+) {
+    return select<MultiplyAddFlat>(type, a, b, c, out, count, stream);
+}
+
+
+Op3SwapBC(MultiplyAddE, multiplyAdd, (isNumeric<A>() && isSame<A,Out>()))
 
 cudaError_t srtMultiplyAddTTE(
     const void* a, const srtTensorDescriptor* paDesc,
@@ -411,6 +503,20 @@ cudaError_t srtMultiplyAddTTE(
 ) {
     Cast2TensorDescriptorsAB(paDesc, pbDesc, poDesc)
     return select<MultiplyAddE>(a, aDesc, element, b, bDesc, out, oDesc, stream);
+}
+
+Op3SwapBCSame(MultiplyAddEFlat, multiplyAdd, isNumeric<A>())
+
+cudaError_t srtMultiplyAddFlatTTE(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    const void* element,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+) {
+    return selectTET<MultiplyAddEFlat>(type, a, element, b, out, count, stream);
 }
 
 //------------------------------------------------------------------------------
@@ -544,7 +650,7 @@ cudaError_t srtSubTE(
 }
 
 // `true` swaps `a` and `element` when calling `divide`
-Op2SwapAB(SubET, subtract, isNumeric<A>())
+Op2SwapAB(SubET, subtract, (isNumeric<A>() && isSame<A,Out>()))
 
 cudaError_t srtSubET(
     const void* element,

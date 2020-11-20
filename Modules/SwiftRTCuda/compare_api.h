@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 #pragma once
-#include "srt_cdefs.h"
+#include "tensor_api.h"
 
 // make visible to Swift as C API
 #ifdef __cplusplus
@@ -36,17 +36,52 @@ cudaError_t srtElementsAlmostEqual(
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
+//------------------------------------------------------------------------------
 cudaError_t srtEqual(
     const void* a, const srtTensorDescriptor* aDesc,
     const void* b, const srtTensorDescriptor* bDesc,
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
+cudaError_t srtEqualFlat(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
+
+cudaError_t srtEqualTE(
+    const void* a, const srtTensorDescriptor* aDesc,
+    const void* element,
+    void* out, const srtTensorDescriptor* oDesc,
+    cudaStream_t stream);
+
+cudaError_t srtEqualFlatTE(
+    srtDataType type,
+    const void* a,
+    const void* element,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
+
+//------------------------------------------------------------------------------
 cudaError_t srtGreater(
     const void* a, const srtTensorDescriptor* aDesc,
     const void* b, const srtTensorDescriptor* bDesc,
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
+
+cudaError_t srtGreaterFlat(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
 
 cudaError_t srtGreaterTE(
     const void* a, const srtTensorDescriptor* aDesc,
@@ -54,6 +89,16 @@ cudaError_t srtGreaterTE(
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
+cudaError_t srtGreaterFlatTE(
+    srtDataType type,
+    const void* a,
+    const void* element,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
+
+//------------------------------------------------------------------------------
 cudaError_t srtGreaterOrEqual(
     const void* a, const srtTensorDescriptor* aDesc,
     const void* b, const srtTensorDescriptor* bDesc,
@@ -90,11 +135,21 @@ cudaError_t srtLessOrEqualTE(
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
+//--------------------------------------------------------------------------
 cudaError_t srtMin(
     const void* a, const srtTensorDescriptor* aDesc,
     const void* b, const srtTensorDescriptor* bDesc,
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
+
+cudaError_t srtMinFlat(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
 
 cudaError_t srtMinTE(
     const void* a, const srtTensorDescriptor* aDesc,
@@ -102,6 +157,16 @@ cudaError_t srtMinTE(
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
+cudaError_t srtMinFlatTE(
+    srtDataType type,
+    const void* a,
+    const void* element,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
+
+//--------------------------------------------------------------------------
 cudaError_t srtMax(
     const void* a, const srtTensorDescriptor* aDesc,
     const void* b, const srtTensorDescriptor* bDesc,
@@ -126,12 +191,24 @@ cudaError_t srtOr(
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
+//--------------------------------------------------------------------------
 cudaError_t srtReplace(
     const void* a, const srtTensorDescriptor* aDesc,
     const void* b, const srtTensorDescriptor* bDesc,
     const void* condition, const srtTensorDescriptor* cDesc,
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
+
+cudaError_t srtReplaceFlat(
+    srtDataType type,
+    const void* a,
+    const void* b,
+    srtDataType ctype,
+    const void* condition,
+    void* out,
+    size_t count,
+    cudaStream_t stream
+);
 
 //==============================================================================
 

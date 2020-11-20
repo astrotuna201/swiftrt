@@ -13,72 +13,164 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include "specialized_c.h"
-#include "srt_types.h"
-#include "index.h"
+#include "specialized_api.h"
+#include "complex.cuh"
+#include "math_fn.cuh"
+#include "iterators.cuh"
+#include "tensor.cuh"
+
+#include "type_name.hpp"
+#include <iostream>       // std::cout
 
 //==============================================================================
 // Swift importable C interface functions
 //==============================================================================
 
-//------------------------------------------------------------------------------
+//==============================================================================
+// Julia Set
+
 // tensorA Element
-template<typename IndexA, typename IndexO>
+template<typename IterA, typename IterO>
 __global__ void mapJulia(
-    const Complex<float>* __restrict__ a,
-    IndexA indexA,
-    float* __restrict__ out, 
-    IndexO indexO,
-    const float tolerance,
-    const Complex<float> C,
+    IterA iterA,
+    IterO iterO,
+    const typename IterA::T c,
+    const typename IterA::T::RealType tolerance2,
     int iterations
 ) {
-    // 0.000790s
-    const auto position = IndexO::Logical(blockIdx, blockDim, threadIdx);
-    if (indexO.isInBounds(position)) {
-        const int ia = indexA.linear(position);
-        const int io = indexO.linear(position);
-
-        float t2 = tolerance * tolerance;
-        Complex<float> Z = a[ia];
-        float d = out[io];
+    // 0.000416s
+    const auto p = typename IterO::Logical(blockIdx, blockDim, threadIdx);
+    if (iterO.isInBounds(p)) {
+        auto z = iterA[p];
+        float d = iterations;
         for (int j = 0; j < iterations; ++j) {
-            Z = Z * Z + C;
-            if (abs2(Z) > t2) {
+            z = z * z + c;
+            if (abs2(z) > tolerance2) {
                 d = min(d, float(j));
                 break;
             }
         }
-        out[io] = d;
+        iterO[p] = d;
     }
 }
 
-
-cudaError_t srtJulia(
-    const void* pz, const srtTensorDescriptor* pzDesc,
-    void* pdivergence, const srtTensorDescriptor* pdDesc,
-    const void* ptolerance,
-    const void* pC,
+template<typename A>
+cudaError_t juliaFlat(
+    const void* pA,
+    const void* pConstant,
+    float tolerance,
     size_t iterations,
+    size_t count,
+    void* pOut,
     cudaStream_t stream
 ) {
-    const TensorDescriptor& zDesc = static_cast<const TensorDescriptor&>(*pzDesc);
-    const TensorDescriptor& dDesc = static_cast<const TensorDescriptor&>(*pdDesc);
+    typedef typename A::RealType RealType;
 
-    const Complex<float>* z = static_cast<const Complex<float>*>(pz);
-    float* d = static_cast<float*>(pdivergence);
-    const float tolerance = *static_cast<const float*>(ptolerance);
-    const Complex<float> C = *static_cast<const Complex<float>*>(pC);
+    // input is Complex<RealType>
+    const A* a = static_cast<const A*>(pA);
+    const A c = *static_cast<const A*>(pConstant);
+    const RealType tolerance2 = tolerance * tolerance;
 
-    dim3 tile = tileSize(dDesc.count);
-    dim3 grid = gridSize<1>(dDesc, tile);
+    // output (divergence) is RealType
+    RealType* out = static_cast<RealType*>(pOut);
 
-    mapJulia<Flat,Flat><<<grid, tile, 0, stream>>>(
-        z, zDesc,
-        d, dDesc,
-        tolerance, 
-        C, 
-        iterations);
+    auto iterA = Flat(a, count);
+    auto iterO = Flat(out, count);
 
-    return cudaSuccess;
+    dim3 tile = tileSize(iterO.count);
+    dim3 grid = gridSize(iterO.count, tile);
+
+    CudaKernelPreCheck(stream);
+    mapJulia<<<grid, tile, 0, stream>>>(iterA, iterO, c, tolerance2, iterations);
+    return CudaKernelPostCheck(stream);
+}
+
+cudaError_t srtJuliaFlat(
+    srtDataType type,
+    const void* a,
+    const void* constant,
+    float tolerance,
+    size_t iterations,
+    size_t count,
+    void* out,
+    cudaStream_t stream
+) {
+    switch (type) {
+    case complex16F: return juliaFlat<Complex<float16>>(a, constant, tolerance, iterations, count, out, stream);
+    case complex32F: return juliaFlat<Complex<float>>(a, constant, tolerance, iterations, count, out, stream);
+    default: return cudaErrorNotSupported;
+    }
+}
+
+//==============================================================================
+// Mandelbrot Set
+
+// tensorA Element
+template<typename IterA, typename IterO>
+__global__ void mapMandelbrot(
+    IterA iterA,
+    IterO iterO,
+    const typename IterA::T::RealType tolerance2,
+    int iterations
+) {
+    // 0.00111s
+    const auto p = typename IterO::Logical(blockIdx, blockDim, threadIdx);
+    if (iterO.isInBounds(p)) {
+        const auto x = iterA[p];
+        auto z = x;
+        float d = iterations;
+        for (int j = 1; j < iterations; ++j) {
+            z = z * z + x;
+            if (abs2(z) > tolerance2) {
+                d = min(d, float(j));
+                break;
+            }
+        }
+        iterO[p] = d;
+    }
+}
+
+template<typename A>
+cudaError_t mandelbrotFlat(
+    const void* pA,
+    float tolerance,
+    size_t iterations,
+    size_t count,
+    void* pOut,
+    cudaStream_t stream
+) {
+    typedef typename A::RealType RealType;
+
+    // input is Complex<RealType>
+    const A* a = static_cast<const A*>(pA);
+    const RealType tolerance2 = tolerance * tolerance;
+
+    // output (divergence) is RealType
+    RealType* out = static_cast<RealType*>(pOut);
+
+    auto iterA = Flat(a, count);
+    auto iterO = Flat(out, count);
+
+    dim3 tile = tileSize(iterO.count);
+    dim3 grid = gridSize(iterO.count, tile);
+
+    CudaKernelPreCheck(stream);
+    mapMandelbrot<<<grid, tile, 0, stream>>>(iterA, iterO, tolerance2, iterations);
+    return CudaKernelPostCheck(stream);
+}
+
+cudaError_t srtMandelbrotFlat(
+    srtDataType type,
+    const void* a,
+    float tolerance,
+    size_t iterations,
+    size_t count,
+    void* out,
+    cudaStream_t stream
+) {
+    switch (type) {
+    case complex16F: return mandelbrotFlat<Complex<float16>>(a, tolerance, iterations, count, out, stream);
+    case complex32F: return mandelbrotFlat<Complex<float>>(a, tolerance, iterations, count, out, stream);
+    default: return cudaErrorNotSupported;
+    }
 }

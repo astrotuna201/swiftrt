@@ -14,15 +14,16 @@
 // limitations under the License.
 //
 #pragma once
-#include "compare_fn.h"
-#include "index.h"
+#include "srt_traits.h"
+#include "compare_fn.cuh"
+#include "iterators.cuh"
 
 //==============================================================================
 // vjpMin
 template<typename T>
 __device__ inline T vjpMin(const T& a, const T& b, const T& c) {
     auto m = lessOrEqual(a, b);
-    auto v = T();
+    T v = T();
     if constexpr (packing<T>::count == 1) {
         if (m) v = c;
     } else if constexpr (packing<T>::count == 2) {

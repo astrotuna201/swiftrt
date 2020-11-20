@@ -14,8 +14,7 @@
 // limitations under the License.
 //
 #pragma once
-#include "srt_cdefs.h"
-
+#include "tensor_api.h"
 
 // make visible to Swift as C API
 #ifdef __cplusplus
@@ -23,69 +22,62 @@ extern "C" {
 #endif
 
 //==============================================================================
-/// srtDelayStream
-/// a utility function for unit testing to simulate work
-cudaError_t srtDelayStream(double seconds, cudaStream_t stream);
 
-//==============================================================================
-/// srtCopy
-/// copies elements from x to out, optionally casting and reordering elements
-cudaError_t srtCopy(
+cudaError_t srtAbsSum(
     const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
     cudaStream_t stream);
 
-cudaError_t srtFill(
+cudaError_t srtAll(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* element,
     cudaStream_t stream);
 
-cudaError_t srtFillRange(
+cudaError_t srtAny(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* first,
-    const void* last,
-    const void* step,
     cudaStream_t stream);
 
-cudaError_t srtEye(
+cudaError_t srtSum(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const long offset,
     cudaStream_t stream);
 
-cudaError_t srtFillRandomUniform(
+cudaError_t srtMean(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* lower,
-    const void* upper,
-    const uint64_t seed,
     cudaStream_t stream);
 
-cudaError_t srtFillRandomNormal(
+cudaError_t srtMinValue(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* mean,
-    const void* std,
-    const uint64_t seed,
     cudaStream_t stream);
 
-cudaError_t srtFillRandomNormalTensorArgs(
+cudaError_t srtArgMin(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* meanTensor,
-    const void* stdTensor,
-    const uint64_t seed,
     cudaStream_t stream);
 
-cudaError_t srtFillRandomTruncatedNormal(
+cudaError_t srtMaxValue(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* mean,
-    const void* std,
-    const uint64_t seed,
     cudaStream_t stream);
 
-cudaError_t srtFillRandomTruncatedNormalTensorArgs(
+cudaError_t srtArgMax(
+    const void* x, const srtTensorDescriptor* xDesc,
     void* out, const srtTensorDescriptor* oDesc,
-    const void* meanTensor,
-    const void* stdTensor,
-    const uint64_t seed,
     cudaStream_t stream);
+
+cudaError_t srtProd(
+    const void* x, const srtTensorDescriptor* xDesc,
+    void* out, const srtTensorDescriptor* oDesc,
+    cudaStream_t stream);
+
+cudaError_t srtProdNonZeros(
+    const void* x, const srtTensorDescriptor* xDesc,
+    void* out, const srtTensorDescriptor* oDesc,
+    cudaStream_t stream);
+
 
 //==============================================================================
 #ifdef __cplusplus
