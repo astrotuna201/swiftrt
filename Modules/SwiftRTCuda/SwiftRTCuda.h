@@ -13,8 +13,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include <cublasLt.h>
-#include <cuda_runtime.h>
-#include <cudnn.h>
-#include <curand.h>
-#include "SrtCudaKernels.h"
+#pragma once
+
+// this is an umbrella header
+#include "compare_api.h"
+#include "copy_api.h"
+#include "fill_api.h"
+#include "math_api.h"
+#include "memory_api.h"
+#include "reduce_api.h"
+#include "specialized_api.h"
+#include "utilities_api.h"
