@@ -24,7 +24,6 @@ import Numerics
 // capturing for asynchrnous execution. The async operations are safe,
 // because tensor storage lifetime is gauranteed by the queue.
 extension DeviceQueue {
-
   //==========================================================================
   // caller defined generator
   @inlinable func mapOp<S, E>(
@@ -95,91 +94,6 @@ extension DeviceQueue {
       queue.async(group: group) {
         out.indices.forEach { out[$0] = op(out[$0]) }
       }
-    }
-  }
-
-  //==========================================================================
-  // reduce entire input
-  @inlinable public func mapReduce<S, E>(
-    _ a: Tensor<S, E>,
-    _ out: inout Tensor<S, E>,
-    _ initialValue: E.Value,
-    _ op: @escaping (E.Value, E.Value) -> E.Value
-  ) {
-    assert(a.order == out.order && out.isContiguous)
-
-    func execute<A: Collection, O: MutableCollection>(
-      _ a: A,
-      _ out: O,
-      _ initialValue: O.Element,
-      _ op: @escaping (O.Element, A.Element) -> O.Element
-    ) {
-      var out = out
-      let io = out.startIndex
-
-      if mode == .sync {
-        out[io] = a.reduce(into: initialValue) { $0 = op($0, $1) }
-      } else {
-        queue.async(group: group) {
-          out[io] = a.reduce(into: initialValue) { $0 = op($0, $1) }
-        }
-      }
-    }
-
-    if a.isContiguous {
-      execute(a.buffer, out.mutableBuffer, initialValue, op)
-    } else {
-      execute(a.elements, out.mutableBuffer, initialValue, op)
-    }
-  }
-
-  //==========================================================================
-  // reduction along axes
-  @inlinable func reduceAlongAxes<S, E, RE>(
-    _ a: Tensor<S, E>,
-    _ output: inout Tensor<S, RE>,
-    _ initialValue: RE.Value,
-    _ op: @escaping (RE.Value, E.Value) -> RE.Value
-  ) {
-    func execute<A: Collection, O: MutableCollection, OS: MutableCollection>(
-      _ a: A,
-      _ out: O,
-      _ outStorage: OS,
-      _ initialValue: OS.Element,
-      _ op: @escaping (O.Element, A.Element) -> O.Element
-    ) {
-      var out = out
-      var outStorage = outStorage
-      if mode == .sync {
-        outStorage.indices.forEach { outStorage[$0] = initialValue }
-        zip(out.indices, a).forEach { out[$0] = op(out[$0], $1) }
-      } else {
-        queue.async(group: group) {
-          outStorage.indices.forEach { outStorage[$0] = initialValue }
-          zip(out.indices, a).forEach { out[$0] = op(out[$0], $1) }
-        }
-      }
-    }
-
-    // pass a flat output iterator to the function to set initial values
-    let outStorage = output.mutableBuffer
-
-    // project `out` to match `a`'s shape to enable operations along axes
-    let mutableElements = LogicalElements<S, RE>(
-      a.count,
-      a.shape,
-      repeatedStrides(matching: output, to: a.shape),
-      output.storage,
-      output.storageBase,
-      output.order,
-      output.spanCount)
-
-    mutableElements.prepareForReadWrite()
-
-    if a.isContiguous {
-      execute(a.buffer, mutableElements, outStorage, initialValue, op)
-    } else {
-      execute(a.elements, mutableElements, outStorage, initialValue, op)
     }
   }
 
@@ -264,6 +178,41 @@ extension DeviceQueue {
       }
     } else {
       execute(a.elements, output.mutableElements, op)
+    }
+  }
+
+  //==========================================================================
+  // reduce entire input
+  @inlinable public func mapReduce<S, E>(
+    _ a: Tensor<S, E>,
+    _ out: inout Tensor<S, E>,
+    _ initialValue: E.Value,
+    _ op: @escaping (inout E.Value, E.Value) -> Void
+  ) {
+    assert(a.order == out.order && out.isContiguous)
+    
+    func execute<A: Collection, O: MutableCollection>(
+      _ a: A,
+      _ out: O,
+      _ initialValue: O.Element,
+      _ op: @escaping (inout O.Element, A.Element) -> Void
+    ) {
+      var out = out
+      let io = out.startIndex
+      
+      if mode == .sync {
+        out[io] = a.reduce(into: initialValue, op)
+      } else {
+        queue.async(group: group) {
+          out[io] = a.reduce(into: initialValue, op)
+        }
+      }
+    }
+    
+    if a.isContiguous {
+      execute(a.buffer, out.mutableBuffer, initialValue, op)
+    } else {
+      execute(a.elements, out.mutableBuffer, initialValue, op)
     }
   }
 

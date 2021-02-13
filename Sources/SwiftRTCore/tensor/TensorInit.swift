@@ -16,7 +16,6 @@
 
 import Foundation
 import Numerics
-import _Differentiation
 
 //==============================================================================
 // ranked convenience types
@@ -114,7 +113,6 @@ extension Tensor {
   ///  - shape: the shape of the tensor
   ///  - order: the storage order of the elements
   ///  - name: the name of the tensor
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init(
     repeating element: TensorElement.Value,
     to shape: Shape,
@@ -130,7 +128,6 @@ extension Tensor {
   /// - Parameters:
   ///  - other: the tensor to repeat
   ///  - shape: the shape of the tensor
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init(repeating other: Self, to shape: Shape) {
     let strides = repeatedStrides(matching: other, to: shape)
     let count = shape.elementCount()
@@ -146,44 +143,29 @@ extension Tensor {
   }
 
   //--------------------------------------------------------------------------
+  /// flattened
+  /// - Returns: a 1D flattened view of a tensor
+  @inlinable public var flattened: TensorR1<TensorElement> {
+    assert(isContiguous, "can only flatten contiguous shapes")
+    return TensorR1<TensorElement>(
+      shape: Shape1(self.count),
+      strides: Shape1.one,
+      count: self.count,
+      storage: self.storage,
+      storageBase: self.storageBase,
+      spanCount: self.count,
+      order: self.order,
+      shared: self.isShared)
+  }
+  
+  //--------------------------------------------------------------------------
   /// reductionShape
   /// computes the shape for a reduction result along the specified axes
-  @inlinable public func reductionShape(along axes: [Int]?) -> Shape {
-    guard let axes = axes else { return Shape.one }
-    assert(
-      Set(axes).isSubset(of: (-Shape.rank)..<Shape.rank),
-      "axis must be within -rank..<rank")
-    var result = shape
-    // set 1 for each dimension specified in the axes list
-    axes.forEach {
-      result[$0 >= 0 ? $0 : $0 + Shape.rank] = 1
-    }
+  @inlinable public func reductionShape(_ axis: Int) -> Shape {
+    let axis = Shape.makePositive(axis: axis)
+    var result = self.shape
+    result[axis] = 1
     return result
-  }
-}
-
-extension Tensor where TensorElement.Value: DifferentiableNumeric {
-  @derivative(of:init(repeating:to:order:name:))
-  @usableFromInline static func _vjpInit(
-    repeating element: Element,
-    to shape: Shape,
-    order: Order,
-    name: String
-  ) -> (value: Self, pullback: (Self) -> (Element)) {
-    (
-      Self(repeating: element, to: shape, order: order, name: name),
-      {
-        $0.sum().element
-      }
-    )
-  }
-
-  @derivative(of:init(repeating:to:))
-  @usableFromInline static func _vjpInit(repeating other: Self, to shape: Shape)
-    -> (value: Self, pullback: (Self) -> (Self))
-  {
-    // TODO: this is probably wrong. Test this
-    (Self(repeating: other, to: shape), { $0 })
   }
 }
 
@@ -204,7 +186,7 @@ extension Tensor {
   ///  - name: the name of the tensor
   @inlinable public init(
     range: Range<Int>,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where TensorElement.Value: Numeric {
@@ -225,7 +207,7 @@ extension Tensor {
   @inlinable public init(
     from first: TensorElement.Value,
     to last: TensorElement.Value,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where TensorElement.Value: BinaryInteger {
@@ -237,13 +219,33 @@ extension Tensor {
   @inlinable public init(
     from first: TensorElement.Value,
     to last: TensorElement.Value,
-    _ shape: Shape,
+    shape: Shape.Tuple,
+    order: Order = .defaultOrder,
+    name: String = defaultTensorName
+  ) where TensorElement.Value: BinaryInteger {
+    self.init(from: first, to: last, shape: Shape(shape), order: order, name: name)
+  }
+  
+  @inlinable public init(
+    from first: TensorElement.Value,
+    to last: TensorElement.Value,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where TensorElement.Value: AlgebraicField {
     self.init(shape: shape, order: order, name: name)
     let step = (last - first) / TensorElement.Value(exactly: count - 1)!
     currentQueue.fill(&self, from: first, to: last, by: step)
+  }
+
+  @inlinable public init(
+    from first: TensorElement.Value,
+    to last: TensorElement.Value,
+    shape: Shape.Tuple,
+    order: Order = .defaultOrder,
+    name: String = defaultTensorName
+  ) where TensorElement.Value: AlgebraicField {
+    self.init(from: first, to: last, shape: Shape(shape), order: order, name: name)
   }
 }
 
@@ -272,7 +274,7 @@ extension Tensor {
   ///  - name: the name of the tensor
   @inlinable public init<C>(
     stored elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where C: Collection, C.Element == TensorElement.Stored {
@@ -298,7 +300,7 @@ extension Tensor {
   ///  - name: the name of the tensor
   @inlinable public init<C>(
     _ elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where C: Collection, C.Element == TensorElement.Value {
@@ -323,7 +325,7 @@ extension Tensor {
   ///  - name: the name of the tensor
   @inlinable public init<C>(
     _ elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where C: Collection, C.Element == Bool, TensorElement.Value: Numeric {
@@ -350,7 +352,7 @@ extension Tensor {
   ///  - name: the name of the tensor
   @inlinable public init<C>(
     _ elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   ) where C: Collection, C.Element: Numeric, TensorElement.Value == Bool {
@@ -371,18 +373,14 @@ extension Tensor {
   /// - Parameters:
   ///  - elements: the value collection used to initialize storage
   ///  - shape: the shape of the tensor
-  ///  - order: the storage order of the elements
+  ///  - order: the tensor element storage order
   ///  - name: the name of the tensor
   @inlinable public init<C>(
     _ elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
-  )
-  where
-    C: Collection, C.Element: BinaryInteger,
-    TensorElement.Value: Numeric
-  {
+  ) where C: Collection, C.Element: BinaryInteger, TensorElement.Value: Numeric {
     assert(shape.elementCount() == elements.count)
     self.init(shape: shape, order: order, name: name)
 
@@ -405,7 +403,7 @@ extension Tensor {
   // Note: to handle the case of Double <--> Float
   @inlinable public init<C>(
     _ elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   )
@@ -435,7 +433,7 @@ extension Tensor {
   // Note: to handle the case of Double <--> Float
   @inlinable public init<C>(
     _ elements: C,
-    _ shape: Shape,
+    shape: Shape,
     order: Order = .defaultOrder,
     name: String = defaultTensorName
   )
@@ -468,19 +466,54 @@ extension Tensor {
 }
 
 //==============================================================================
+/// reorder(_:order:
+/// - Parameters:
+///  - a: the tensor to reorder
+///  - order: the new storage order
+@inlinable public func reorder<S,E>(
+  _ a: Tensor<S, E>,
+  order: Order
+) -> Tensor<S, E> {
+  guard a.order != order else { return a }
+  
+  var out = Tensor<S, E>(
+    shape: a.shape,
+    strides: a.shape.strides(for: order),
+    count: a.count,
+    storage: Platform.Storage(
+      type: E.self,
+      count: a.count,
+      name: a.name),
+    storageBase: 0,
+    spanCount: a.spanCount,
+    order: order,
+    shared: a.isShared)
+  
+  // performs an indexed copy which reorders the elements
+  currentQueue.diagnostic(
+    .reorder,
+    "copying \(a.name) order: \(a.order) --> "
+      + "\(out.name) \(E.self)[\(out.count)] "
+      + "order: \(order) on \(currentQueue.name)",
+    categories: [.dataCopy, .dataReorder])
+  
+  copyElements(from: a, to: &out)
+  return out
+}
+
+//==============================================================================
 /// init(reshaping:shape:order:
 /// - Parameters:
 ///  - other: the tensor to reshape
 ///  - newShape: the shape of the new tensor
-///  - order: the storage order of the new tensor
+///  - order: the storage order of the new tensor. By default it is the same as the input
 extension Tensor {
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init<S>(
     reshaping other: Tensor<S, TensorElement>,
     to newShape: Shape,
-    order newLayout: Order = .defaultOrder
-  ) where S: TensorShape {
+    order newOrder: Order? = nil
+  ) {
     assert(other.isContiguous, "cannot reshape non contiguous data")
     assert(
       {
@@ -492,83 +525,34 @@ extension Tensor {
         return true
       }(), "There can only be one instance of -1 in the shape")
 
+    //------------------------------------
     // resolve an implied dimension if it exists
     var shape = newShape
-    for i in 0..<shape.count where newShape[i] == -1 {
+    for i in 0..<Shape.rank where newShape[i] == -1 {
       shape[i] = 1
       let specifiedCount = shape.elementCount()
-      assert(
-        other.count % specifiedCount == 0,
-        "incompatible dimensions")
+      assert(other.count % specifiedCount == 0, "incompatible dimensions")
       shape[i] = other.count / specifiedCount
     }
     assert(
       shape.elementCount() == other.count,
       "the new shape must have the same number of elements as other")
 
-    // determine storage order
-    let order: Order =
-      newLayout == .col || (newLayout.rawValue == Order.A && other.order == .col) ? .col : .row
+    //------------------------------------
+    // by default the order is the same as other
+    let ordered = reorder(other, order: newOrder ?? other.order)
 
-    // reorder other's elements if needed
-    var source = other
-    if order != other.order {
-      // change the source to have the new storage order and copy
-      let strides = other.shape.strides(for: order)
-      source = Tensor<S, TensorElement>(
-        shape: other.shape,
-        strides: strides,
-        count: other.count,
-        storage: Platform.Storage(
-          type: TensorElement.self,
-          count: source.count,
-          name: other.name),
-        storageBase: 0,
-        spanCount: other.spanCount,
-        order: order,
-        shared: other.isShared)
-
-      // performs an indexed copy which reorders the elements
-      currentQueue.diagnostic(
-        .reorder,
-        "copying \(other.name) order: \(other.order) --> "
-          + "\(source.name) \(Element.self)[\(source.count)] "
-          + "order: \(source.order) on \(currentQueue.name)",
-        categories: [.dataCopy, .dataReorder])
-
-      copyElements(from: other, to: &source)
-    }
-
+    //------------------------------------
     // init with new shape in the corrected order
     self.init(
       shape: shape,
-      strides: shape.strides(for: order),
-      count: source.count,
-      storage: source.storage,
-      storageBase: source.storageBase,
-      spanCount: source.spanCount,
-      order: source.order,
-      shared: source.isShared)
-  }
-}
-
-extension Tensor where TensorElement.Value: DifferentiableNumeric {
-  @derivative(of:init(reshaping:to:order:))
-  @usableFromInline static func _vjpInit<S>(
-    reshaping other: Tensor<S, TensorElement>,
-    to newShape: Shape,
-    order newOrder: Order
-  ) -> (value: Self, pullback: (Self) -> Tensor<S, TensorElement>)
-  where S: TensorShape {
-    let value = Self(reshaping: other, to: newShape, order: newOrder)
-    return (
-      value,
-      {
-        Tensor<S, TensorElement>(
-          reshaping: $0, to: other.shape,
-          order: other.order)
-      }
-    )
+      strides: shape.strides(for: ordered.order),
+      count: ordered.count,
+      storage: ordered.storage,
+      storageBase: ordered.storageBase,
+      spanCount: ordered.spanCount,
+      order: ordered.order,
+      shared: ordered.isShared)
   }
 }
 
@@ -580,17 +564,16 @@ extension Tensor where TensorElement.Value: DifferentiableNumeric {
 
 extension Tensor {
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init<S, Axes>(
     expanding other: Tensor<S, TensorElement>,
     axes: Axes
-  ) where S: TensorShape, Axes: TensorShape {
+  ) where Axes: TensorShape {
     // set the expanded axes
     var shape = Shape.zero
     var strides = Shape.zero
 
     // default case indents by 1
-    if axes.count == 1 && axes[0] == 0 {
+    if Axes.rank == 1 && axes[0] == 0 {
       shape[0] = 1
       strides[0] = other.shape[0] * other.strides[0]
       for (i, j) in zip(1..<Shape.rank, 0..<S.rank) {
@@ -598,10 +581,10 @@ extension Tensor {
         strides[i] = other.strides[j]
       }
     } else {
-      assert(Shape.rank == S.rank + axes.count, "rank mismatch")
+      assert(Shape.rank == S.rank + Axes.rank, "rank mismatch")
       // set 1 in expanded dimensions making sure axes are positive
       // and keeping in mind the axes could be in any order
-      for i in 0..<axes.count {
+      for i in 0..<Axes.rank {
         shape[axes[i] >= 0 ? axes[i] : axes[i] + S.rank] = 1
       }
 
@@ -637,22 +620,11 @@ extension Tensor {
       shared: other.isShared)
   }
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
-  @inlinable public init<S>(expanding other: Tensor<S, TensorElement>, axes: Int...)
-  where S: TensorShape {
-    self.init(expanding: other, axes: Shape(axes))
-  }
-}
-
-extension Tensor where TensorElement.Value: DifferentiableNumeric {
-  @derivative(of:init(expanding:axes:))
-  @usableFromInline static func _vjpInit<S, Axes>(
+  @inlinable public init<S>(
     expanding other: Tensor<S, TensorElement>,
-    axes: Axes
-  ) -> (value: Self, pullback: (Self) -> Tensor<S, TensorElement>)
-  where S: TensorShape, Axes: TensorShape {
-    let value = Self(expanding: other, axes: axes)
-    return (value, { Tensor<S, TensorElement>(squeezing: $0, axes: axes) })
+    axes: Int...
+  ) {
+    self.init(expanding: other, axes: Shape(axes))
   }
 }
 
@@ -663,11 +635,10 @@ extension Tensor where TensorElement.Value: DifferentiableNumeric {
 ///  - axes: a list of axes to squeeze
 extension Tensor {
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init<S, Axes>(
     squeezing other: Tensor<S, TensorElement>,
     axes: Axes
-  ) where S: TensorShape, Axes: TensorShape {
+  ) where Axes: TensorShape {
     assert(Shape.rank == S.rank - Axes.rank, "rank mismatch")
     var axis = 0
     var shape = Shape.zero
@@ -676,7 +647,7 @@ extension Tensor {
 
     // zero the axes to squeeze. These are done in two loops
     // because the axes list could be in any order
-    for i in 0..<axes.count {
+    for i in 0..<Axes.rank {
       otherShape[axes[i] >= 0 ? axes[i] : axes[i] + S.rank] = 0
     }
 
@@ -697,22 +668,11 @@ extension Tensor {
       shared: other.isShared)
   }
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
-  @inlinable public init<S>(squeezing other: Tensor<S, TensorElement>, axes: Int...)
-  where S: TensorShape {
-    self.init(squeezing: other, axes: Shape(axes))
-  }
-}
-
-extension Tensor where TensorElement.Value: DifferentiableNumeric {
-  @derivative(of:init(squeezing:axes:))
-  @usableFromInline static func _vjpInit<S, Axes>(
+  @inlinable public init<S>(
     squeezing other: Tensor<S, TensorElement>,
-    axes: Axes
-  ) -> (value: Self, pullback: (Self) -> Tensor<S, TensorElement>)
-  where S: TensorShape, Axes: TensorShape {
-    let value = Self(squeezing: other, axes: axes)
-    return (value, { Tensor<S, TensorElement>(expanding: $0, axes: axes) })
+    axes: Int...
+  ) {
+    self.init(squeezing: other, axes: Shape(axes))
   }
 }
 
@@ -723,22 +683,19 @@ extension Tensor where TensorElement.Value: DifferentiableNumeric {
 ///  - axis: the axis to stack along
 extension Tensor {
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init<S>(
     stacking others: [Tensor<S, TensorElement>],
     axis: Int = 0
-  ) where S: TensorShape {
+  ) {
     // make positive
     let positiveAxis = axis < 0 ? axis + Shape.rank : axis
     // create tensor of stacked shape and copy
-    self = withoutDerivative(
-      at: Self(
+    self = Self(
         shape: stackedShape(of: others, along: positiveAxis),
-        order: others[0].order))
+        order: others[0].order)
     stack(others, axis: positiveAxis, into: &self)
   }
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init<S>(
     stacking others: Tensor<S, TensorElement>...,
     axis: Int = 0
@@ -753,7 +710,7 @@ extension Tensor {
 @inlinable func stackedShape<S, SR, E>(
   of tensors: [Tensor<S, E>],
   along axis: Int = 0
-) -> SR where S: TensorShape, SR: TensorShape {
+) -> SR where SR: TensorShape {
   assert(axis >= 0)
   var j = 0
   var stackedShape = SR.zero
@@ -771,12 +728,11 @@ extension Tensor {
 ///  - others: the collection to squeeze
 ///  - axis: the axis to stack along
 ///  - result: the output tensor
-@differentiable(where E.Value: DifferentiableNumeric)
 @inlinable public func stack<S, SR, E>(
   _ tensors: [Tensor<S, E>],
   axis: Int = 0,
   into result: inout Tensor<SR, E>
-) where S: TensorShape, SR: TensorShape {
+) {
   // make positive
   let axis = axis < 0 ? axis + SR.rank : axis
 
@@ -809,60 +765,14 @@ extension Tensor {
   }
 }
 
-@derivative(of:stack)
-@inlinable func vjpStack<S, SR, E>(
-  _ tensors: [Tensor<S, E>],
-  axis: Int = 0,
-  into result: inout Tensor<SR, E>
-) -> (
-  value: (),
-  pullback: (inout Tensor<SR, E>.TangentVector)
-    -> Array<Tensor<S, E>>.TangentVector
-)
-where S: TensorShape, SR: TensorShape {
-  let tensorCount = tensors.count
-  func pullback(_ resultTangent: inout Tensor<SR, E>.TangentVector)
-    -> Array<Tensor<S, E>>.TangentVector
-  {
-    // Fill `tensorTangents` with slices of `resultTangent` of shape
-    // `tensorShapes[0]`, `tensorShapes[1]`, etc.
-    var tensorTangents: [Tensor<S, E>] = []
-    var lower = SR.zero
-    var upper = resultTangent.shape
-    upper[axis] = 1
-    for _ in 0..<tensorCount {
-      let slice = Tensor<S, E>(
-        squeezing: resultTangent[lower, upper],
-        axes: Shape1(axis))
-      tensorTangents.append(slice)
-      lower[axis] += 1
-      upper[axis] += 1
-    }
-
-    // Set `resultTangent` to zero.
-    // Note: We can't use `fill(_:with:)` because `resultTangent` aliases
-    // `tensorTangents`.
-    // TODO: track and fix
-    // Note: https://bugs.swift.org/browse/TF-1250 will allow us to make
-    // this pullback more efficient. How:
-    // - Set the wrt parameters and results to
-    //     @differentiable(wrt: (tensors), results: (result))
-    // - This makes `resultTangent` not be inout, so we don't need to set
-    //   it any more.
-    resultTangent = zeros(like: resultTangent)
-
-    return Array.DifferentiableView(tensorTangents)
-  }
-  return (stack(tensors, axis: axis, into: &result), pullback)
-}
-
 //==============================================================================
 /// init(indenting:
 ///
 extension Tensor {
 
-  @inlinable public init<S>(indenting other: Tensor<S, TensorElement>)
-  where S: TensorShape {
+  @inlinable public init<S>(
+    indenting other: Tensor<S, TensorElement>
+  ) {
     assert(S.rank < Shape.rank, "can only indent lower ranked shapes")
 
     // Self and other are different ranks so we append other's elements
@@ -895,8 +805,9 @@ extension Tensor {
 ///
 extension Tensor {
 
-  @inlinable public init<S>(padding other: Tensor<S, TensorElement>)
-  where S: TensorShape {
+  @inlinable public init<S>(
+    padding other: Tensor<S, TensorElement>
+  ) {
     assert(S.rank < Shape.rank, "can only indent lower ranked shapes")
 
     // Self and other are different ranks so we append other's elements
@@ -930,7 +841,6 @@ extension Tensor {
 ///   `-rank..<rank`
 extension Tensor {
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public init(
     transposing other: Self,
     permutatedBy permutations: Shape? = nil
@@ -973,37 +883,10 @@ extension Tensor {
   }
 
   /// - Returns: transpose of self
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public var t: Self { Self(transposing: self) }
 
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public func transposed(permutatedBy permutations: Shape) -> Self {
     Self(transposing: self, permutatedBy: permutations)
-  }
-}
-
-extension Tensor where TensorElement.Value: DifferentiableNumeric {
-
-  @derivative(of:init(transposing:permutatedBy:))
-  @usableFromInline static func _vjpInit(
-    transposing other: Self,
-    permutatedBy permutations: Shape?
-  ) -> (value: Self, pullback: (Self) -> Self) {
-    let value = Self(transposing: other, permutatedBy: permutations)
-    return (
-      value,
-      {
-        Self(
-          shape: other.shape,
-          strides: other.strides,
-          count: other.count,
-          storage: $0.storage,
-          storageBase: $0.storageBase,
-          spanCount: other.spanCount,
-          order: other.order,
-          shared: $0.isShared)
-      }
-    )
   }
 }
 

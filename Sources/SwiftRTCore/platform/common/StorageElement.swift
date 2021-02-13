@@ -437,45 +437,6 @@ public struct UInt4: PackedStorageElement {
 //==============================================================================
 
 //==============================================================================
-// BFloat16
-extension BFloat16: StorageElement {
-  @inlinable public static func storedIndex(_ index: Int) -> Int { index }
-  @inlinable public static func storedCount(_ count: Int) -> Int { count }
-  @inlinable public static func alignment(_ index: Int) -> Int { 0 }
-
-  //-------------------------------------
-  // accessors
-  @inlinable public static func value(
-    at index: Int, from stored: Self
-  ) -> Float { Float(stored) }
-
-  @inlinable public static func store(
-    value: Float, at index: Int, to stored: inout Self
-  ) { stored = Self(value) }
-
-  @inlinable public static func stored(value: Float) -> Self { Self(value) }
-
-  @inlinable public static func storedRange(start: Int, count: Int)
-    -> (storedStart: Int, storedCount: Int)
-  { (start, count) }
-
-  @inlinable public static func getValue(
-    from buffer: UnsafeBufferPointer<BFloat16>,
-    at index: Int
-  ) -> Float {
-    Float(buffer[index])
-  }
-
-  @inlinable public static func set(
-    value: Float,
-    in buffer: UnsafeMutableBufferPointer<BFloat16>,
-    at index: Int
-  ) {
-    buffer[index] = BFloat16(value)
-  }
-}
-
-//==============================================================================
 // standard native type conformance
 extension Bool: StorageElement {
   public typealias Stored = Self
@@ -517,12 +478,6 @@ extension Float: StorageElement {
   public typealias Value = Self
 }
 
-@available(OSX 11.0, iOS 14.0, watchOS 7.0, tvOS 14.0, *)
-extension Float16: StorageElement {
-  public typealias Stored = Self
-  public typealias Value = Self
-}
-
 extension Double: StorageElement {
   public typealias Stored = Self
   public typealias Value = Self
@@ -548,10 +503,9 @@ public protocol ScalarMultiplicative {
 
 // Note: this copies the host buffer so that it can be accessed asynchronously
 // without copy-on-write issues
-public struct BufferElements<Shape, TensorElement>: MutableCollection
-where Shape: TensorShape, TensorElement: StorageElement {
+public struct BufferElements<E: StorageElement>: MutableCollection {
   // properties
-  public let hostBuffer: UnsafeMutableBufferPointer<TensorElement.Stored>
+  public let hostBuffer: UnsafeMutableBufferPointer<E.Stored>
   public let startIndex: Int
   public let endIndex: Int
 
@@ -561,12 +515,29 @@ where Shape: TensorShape, TensorElement: StorageElement {
   ///
   /// - Parameters:
   ///  - tensor: the tensor that will be read
-  @inlinable public init(tensor: Tensor<Shape, TensorElement>) {
+  @inlinable public init<S>(tensor: Tensor<S, E>) {
     assert(tensor.isContiguous, "can only iterate contiguous buffer elements")
+    self.init(
+      buffer: tensor.read(using: currentQueue),
+      storageBase: tensor.storageBase,
+      startIndex: 0,
+      count: tensor.count)
+  }
 
-    // make the data range available for reading by the cpu
-    let buffer = tensor.read(using: currentQueue)
-
+  /// init(tensor:
+  /// creates a storage buffer iterator for reading tensor elments
+  ///
+  /// - Parameters:
+  ///  - buffer: the buffer that will be read
+  ///  - storageBase: the `tensor.storageBase` which is used for element alignment
+  ///  - startIndex: the first logical index to read
+  ///  - count: number of logical elements in range
+  @inlinable public init(
+    buffer: UnsafeBufferPointer<E.Stored>,
+    storageBase: Int,
+    startIndex start: Int,
+    count: Int
+  ) {
     // Init members and note that this does not actually mutate, even
     // though we commonly hold a mutable buffer pointer
     let p = UnsafeMutablePointer(mutating: buffer.baseAddress)
@@ -576,30 +547,50 @@ where Shape: TensorShape, TensorElement: StorageElement {
     // `Value` type within the `Stored` type.
     // For Int1 the alignment is 0 - 7, Int4 0 - 1, for
     // normal types like Float, it is always 0
-    startIndex = TensorElement.alignment(tensor.storageBase)
-    endIndex = startIndex + tensor.count
+    startIndex = E.alignment(storageBase) + start
+    endIndex = startIndex + count
   }
 
   //--------------------------------------------------------------------------
-  /// init(mutating:
+  /// init(tensor:
   /// creates a storage buffer iterator for reading/writing tensor elments
   ///
   /// - Parameters:
   ///  - tensor: the tensor that will be written
-  @inlinable public init(tensor: inout Tensor<Shape, TensorElement>) {
+  @inlinable public init<S>(tensor: inout Tensor<S, E>) {
     assert(tensor.isContiguous, "can only iterate contiguous buffer elements")
+    self.init(
+      buffer: tensor.readWrite(using: currentQueue),
+      storageBase: tensor.storageBase,
+      startIndex: 0,
+      count: tensor.count)
+  }
 
+  /// init(tensor:
+  /// creates a storage buffer iterator for reading/writing tensor elments
+  ///
+  /// - Parameters:
+  ///  - buffer: the buffer to be written
+  ///  - storageBase: the `tensor.storageBase` which is used for element alignment
+  ///  - startIndex: the first logical index to read
+  ///  - count: number of logical elements in range
+  @inlinable public init(
+    buffer: UnsafeMutableBufferPointer<E.Stored>,
+    storageBase: Int,
+    startIndex start: Int,
+    count: Int
+  ) {
     // convert logical base and strided span count to stored.
     // They will not be equal for packed element types like `Int4`
     // make the data range available for reading/writing by the cpu
-    hostBuffer = tensor.readWrite(using: currentQueue)
+    hostBuffer = buffer
 
     // `startIndex` is the logical position of the first
     // `Value` type within the `Stored` type.
     // For Int1 the alignment is 0 - 7, Int4 0 - 1, for
     // normal types like Float, it is always 0
-    startIndex = TensorElement.alignment(tensor.storageBase)
-    endIndex = startIndex + tensor.count
+    startIndex = E.alignment(storageBase) + start
+    endIndex = startIndex + count
   }
 
   //--------------------------------------------------------------------------
@@ -608,15 +599,15 @@ where Shape: TensorShape, TensorElement: StorageElement {
 
   //--------------------------------------------------------------------------
   // subscript
-  @inlinable public subscript(position: Int) -> TensorElement.Value {
+  @inlinable public subscript(position: Int) -> E.Value {
     get {
-      let si = TensorElement.storedIndex(position)
-      return TensorElement.value(at: position, from: hostBuffer[si])
+      let si = E.storedIndex(position)
+      return E.value(at: position, from: hostBuffer[si])
     }
 
     set(v) {
-      let si = TensorElement.storedIndex(position)
-      TensorElement.store(value: v, at: position, to: &hostBuffer[si])
+      let si = E.storedIndex(position)
+      E.store(value: v, at: position, to: &hostBuffer[si])
     }
   }
 }

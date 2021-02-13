@@ -16,7 +16,6 @@
 
 import Foundation
 import Numerics
-import _Differentiation
 
 public let defaultElementName = "Element"
 public let defaultTensorName = "Tensor"
@@ -25,7 +24,6 @@ public let defaultReferenceTensorName = "Reference"
 //==============================================================================
 /// Tensor
 public struct Tensor<Shape, TensorElement>:
-  TensorProtocol,
   MutableCollection,
   CustomStringConvertible,
   Logging
@@ -33,30 +31,29 @@ where Shape: TensorShape, TensorElement: StorageElement {
   public typealias Index = ElementIndex<Shape>
   public typealias Element = TensorElement.Value
 
-  /// the number of element
-  @noDerivative public let count: Int
+  /// the count of elements described by `shape`
+  public let count: Int
   /// `true` if the view will be shared by by multiple writers
-  @noDerivative public var isShared: Bool
+  public var isShared: Bool
   /// element storage order in memory
-  @noDerivative public let order: Order
+  public let order: Order
   /// a collection that maps logical coordinates to storage elements
   /// via the current storage order
-  @noDerivative public var logicalElements: LogicalElements<Shape, TensorElement>
+  public var logicalElements: LogicalElements<Shape, TensorElement>
   /// the strides to traverse `shape` in logical coordinates
-  @noDerivative public let logicalStrides: Shape
+  public let logicalStrides: Shape
   /// the dimensions of the element space
-  @noDerivative public let shape: Shape
+  public let shape: Shape
   /// the element storage buffer.
-  @noDerivative public var storage: Platform.Storage
+  public var storage: Platform.Storage
   /// the logical storage buffer base index where this tensor's elements begin
-  @noDerivative public let storageBase: Int
+  public let storageBase: Int
   /// The distance to the next element along each dimension
-  @noDerivative public let strides: Shape
+  public let strides: Shape
   /// the number of storage elements spanned by this tensor
-  @noDerivative public let spanCount: Int
+  public let spanCount: Int
 
-  //--------------------------------------------------------------------------
-  // functional properties
+  //-------------------------------------
   /// the unique storage id
   @inlinable public var id: Int { storage.id }
 
@@ -72,7 +69,7 @@ where Shape: TensorShape, TensorElement: StorageElement {
   /// `true` if the tensor value is zero
   @inlinable public var isZero: Bool { storage.isZero }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// init(
   /// Used to initialize an element collection subview
   @inlinable public init(
@@ -115,7 +112,7 @@ where Shape: TensorShape, TensorElement: StorageElement {
       spanCount)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// init(value:shape:order:name
   /// Used to initialize a tensor with a single Element
   @inlinable public init(
@@ -147,7 +144,7 @@ where Shape: TensorShape, TensorElement: StorageElement {
       spanCount)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// init
   /// Used to represent a single zero value
   // Primarily used to minimize AD zero materialization problem
@@ -194,7 +191,7 @@ public enum Order: Int, Codable {
   /// and 2 rows, then the leading dimension must be at least (32) * 2 = 64.
   case colTiled32
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// Data is ordered as batch N of (rows H, columns W, channels C)
   /// This order is only valid for 4D tensors.
   case NHWC
@@ -203,7 +200,7 @@ public enum Order: Int, Codable {
   /// This order is only valid for 5D tensors.
   case NDHWC
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // NVIDIA native tensor core formats
 
   /// Data is ordered in column-major ordered tiles of composite tiles
@@ -239,38 +236,6 @@ public enum Order: Int, Codable {
 }
 
 @usableFromInline let _messageOrdersMustMatch = "storage orders must match"
-
-//==============================================================================
-/// DifferentiableTensor
-///
-/// While these protocols are not strictly necessary, they are used
-/// to reduce the number of generic requirements when writing
-/// `@differentiable` attributes
-///
-public protocol TensorProtocol: Logging {
-  associatedtype Shape: TensorShape
-  associatedtype TensorElement: StorageElement
-}
-
-public protocol DifferentiableTensor: TensorProtocol & Differentiable
-where Self == TangentVector, TensorElement.Value: DifferentiableNumeric {}
-
-/// DifferentiableNumeric
-public protocol DifferentiableNumeric:
-  Differentiable & Numeric
-where Self == TangentVector {}
-
-extension Float: DifferentiableNumeric {}
-extension Double: DifferentiableNumeric {}
-
-extension Complex: DifferentiableNumeric
-where RealType: Differentiable, RealType.TangentVector == RealType {}
-
-// Differentiable conformance
-extension Tensor: Differentiable & DifferentiableTensor
-where Element: DifferentiableNumeric {
-  public typealias TangentVector = Self
-}
 
 extension Tensor: AdditiveArithmetic where Element: Numeric {
   @inlinable public static var zero: Self { Tensor() }
@@ -388,17 +353,17 @@ where Shape: TensorShape {
 //==============================================================================
 // Tensor collection and sub view extensions
 extension Tensor {
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // sequential buffer element iterators
-  @inlinable public var buffer: BufferElements<Shape, TensorElement> {
+  @inlinable public var buffer: BufferElements<TensorElement> {
     BufferElements(tensor: self)
   }
 
-  @inlinable public var mutableBuffer: BufferElements<Shape, TensorElement> {
+  @inlinable public var mutableBuffer: BufferElements<TensorElement> {
     mutating get { BufferElements(tensor: &self) }
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // logical coordinate element iterators
   @inlinable public var elements: LogicalElements<Shape, TensorElement> {
     logicalElements.prepareForRead()
@@ -412,19 +377,19 @@ extension Tensor {
     }
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// the starting index zero relative to the storage buffer
   @inlinable public var startIndex: Index {
     logicalElements.startIndex
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// the ending index zero relative to the storage buffer
   @inlinable public var endIndex: Index {
     logicalElements.endIndex
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// makeIndex(position:
   /// makes an index from a logical position within `shape`
   /// - Parameters:
@@ -434,13 +399,13 @@ extension Tensor {
     Index(position, position.index(stridedBy: logicalStrides))
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// index(i:
   @inlinable public func index(after i: Index) -> Index {
     logicalElements.index(after: i)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // elemment subscript
   @inlinable public subscript(i: Index) -> Element {
     get {
@@ -458,9 +423,8 @@ extension Tensor {
     }
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // sub view subscript
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public subscript(lower: Shape, upper: Shape) -> Self {
     get { createView(lower, upper, isShared) }
     set {
@@ -470,7 +434,7 @@ extension Tensor {
     }
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // conditional assignment subscript
   @inlinable public subscript(condition: Tensor<Shape, Bool>) -> Self {
     get {
@@ -486,7 +450,7 @@ extension Tensor {
     }
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   // creates a tensor subview
   @inlinable public func createView(
     _ lower: Shape,
@@ -495,7 +459,8 @@ extension Tensor {
   ) -> Self {
     let shape = upper &- lower
     let count = shape.elementCount()
-    let spanCount = strides.areSequential(for: shape) ? count : shape.spanCount(stridedBy: strides)
+    let spanCount = strides.areSequential(for: shape) ?
+      count : shape.spanCount(stridedBy: strides)
     let base = storageBase + lower.index(stridedBy: strides)
 
     return Tensor(
@@ -509,7 +474,7 @@ extension Tensor {
       shared: share)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// shared
   /// creates a shareable instance intended for multi-threaded writes
   /// - Parameters:
@@ -525,7 +490,7 @@ extension Tensor {
     return sharedSelf
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `prepareForWrite`
   /// called before a write operation to ensure that the storage buffer
   /// is unique for this tensor unless it `isShared`
@@ -560,39 +525,19 @@ extension Tensor {
     }
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// - Returns: the collection elements as a 1D Swift array
   @inlinable public var flatArray: [Element] {
     usingSyncQueue {
-      return isContiguous ? [Element](buffer) : [Element](elements)
+      (isContiguous && order == .row) ? [Element](buffer) : [Element](elements)
     }
-  }
-}
-
-//==============================================================================
-/// Derivative registration
-extension Tensor where TensorElement.Value: DifferentiableNumeric {
-  // https://github.com/apple/swift/blob/37b507b31c77ef969151f385cd1902dd44fb3b7f/stdlib/public/core/Array.swift#L2091
-
-  @derivative(of:subscript)
-  @usableFromInline func _vjpSubscript(lower: Shape, upper: Shape)
-    -> (value: Self, pullback: (Self) -> Self)
-  {
-    return (
-      self[lower, upper],
-      { v in
-        var result = zeros(like: self)
-        result[lower, upper] = v
-        return result
-      }
-    )
   }
 }
 
 //==============================================================================
 // Tensor read write access
 extension Tensor {
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `read`
   /// Synchronizes the collection of stored elements with the caller
   /// for reading. This function blocks until the elements are available.
@@ -602,7 +547,7 @@ extension Tensor {
     read(using: Platform.syncQueue)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `read(queue:
   /// Synchronizes the collection of elements for reading
   /// using the specified `queue`. This function is non blocking, and
@@ -622,7 +567,7 @@ extension Tensor {
       at: i, count: storedCount, using: queue)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `deviceRead(queue:
   /// Synchronizes the collection of elements for reading
   /// using the specified `queue`. This function is non blocking, and
@@ -636,7 +581,7 @@ extension Tensor {
     UnsafeRawPointer(read(using: queue).baseAddress!)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `readWrite`
   /// Synchronizes the collection of elements with the caller for read write
   /// This function blocks until the elements are available.
@@ -648,7 +593,7 @@ extension Tensor {
     readWrite(using: Platform.syncQueue)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `readWrite(queue:`
   /// Synchronizes the collection of elements with the caller for read write
   /// using the specified `queue`. This function is non blocking, and
@@ -670,7 +615,7 @@ extension Tensor {
       at: i, count: storedCount, using: queue)
   }
 
-  //--------------------------------------------------------------------------
+  //----------------------------------------------------------------------------
   /// `deviceReadWrite(queue:`
   /// Synchronizes the collection of elements with the caller for read write
   /// using the specified `queue`. This function is non blocking, and
@@ -697,33 +642,16 @@ extension Tensor {
   /// element
   /// can get and set the value of a single element tensor.
   /// - Returns: the only element in the tensor
-  @differentiable(where TensorElement.Value: DifferentiableNumeric)
   @inlinable public var element: Element {
     get {
       assert(
         count == 1,
-        "the `element` property expects "
-          + "the tensor to have a single Element. Use `first` for sets")
+        "the `element` property expects the tensor to have a single Element. Use `first` for sets")
       return TensorElement.getValue(from: read(), at: 0)
     }
     set {
-      assert(count == 1, "the `element` property expects " + "the tensor to have a single Element")
+      assert(count == 1, "the `element` property expects the tensor to have a single Element")
       TensorElement.set(value: newValue, in: readWrite(), at: 0)
     }
-  }
-
-  @derivative(of:element)
-  @inlinable public func vjpElement() -> (
-    value: Element,
-    pullback: (Element) -> Self
-  ) where Element: DifferentiableNumeric {
-    (
-      element,
-      { v in
-        var result = zeros(like: self)
-        result.element = v
-        return result
-      }
-    )
   }
 }
