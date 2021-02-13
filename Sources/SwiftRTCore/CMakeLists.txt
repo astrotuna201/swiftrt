@@ -3,16 +3,21 @@ add_library(SwiftRTCore
   common/HashingUtilities.swift
   common/Helpers.swift
   common/Log.swift
-  common/StdlibExtensions.swift
+
+  differentiable/ComparativeDerivatives.swift
+  differentiable/DifferentialOperators.swift
+  differentiable/FillDerivatives.swift
+  differentiable/MathDerivatives.swift
+  differentiable/ReductionDerivatives.swift
+  differentiable/StdlibExtensions.swift
+  differentiable/TensorDerivatives.swift
 
   numpy/RankFunctions.swift
   numpy/array.swift
   numpy/arrayInit.swift
   numpy/eye.swift
 
-  operators/AlgebraicField.swift
   operators/Comparative.swift
-  operators/DifferentialOperators.swift
   operators/Fill.swift
   operators/Fractals.swift
   operators/Gather.swift
@@ -23,12 +28,12 @@ add_library(SwiftRTCore
   operators/Pool.swift
   operators/Reductions.swift
 
-  platform/common/TempFloat16.swift
   platform/common/BFloat16.swift
   platform/common/ComplexExtensions.swift
   platform/common/DeviceQueue.swift
   platform/common/DiscreteStorage.swift
   platform/common/ExecutionPlanner.swift
+  platform/common/Float16.swift
   platform/common/FunctionProperties.swift
   platform/common/Platform.swift
   platform/common/StorageBuffer.swift
@@ -47,6 +52,7 @@ add_library(SwiftRTCore
   platform/cpu/functions/CpuMath.swift
   platform/cpu/functions/CpuMatmul.swift
   platform/cpu/functions/CpuPool.swift
+  platform/cpu/functions/CpuReduce.swift
   platform/cpu/functions/CpuReductions.swift
 
   random/RandomGenerators.swift
